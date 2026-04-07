@@ -49,6 +49,8 @@ var (
 		{"tsvector/tsquery types not supported", regexp.MustCompile(`(?i)\b(tsvector|tsquery)\b`)},
 		{"range types not supported", regexp.MustCompile(`(?i)\b(int4range|int8range|numrange|tsrange|tstzrange|daterange)\b`)},
 		{"hstore type not supported", regexp.MustCompile(`(?i)\bhstore\b`)},
+		{"jsonb type not supported as column type (store as text, cast at query time)", regexp.MustCompile(`(?i)\bjsonb\b`)},
+		{"json type not supported as column type (store as text, cast at query time)", regexp.MustCompile(`(?i)\bjson\b`)},
 
 		// Unsupported index types
 		{"only btree indexes supported (hash not supported)", regexp.MustCompile(`(?i)\bUSING\s+hash\b`)},

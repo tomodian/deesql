@@ -197,7 +197,7 @@ CREATE TABLE t (id TEXT NOT NULL);
 	})
 
 	t.Run("unsupported types detected", func(t *testing.T) {
-		types := []string{"money", "xml", "cidr", "macaddr", "hstore", "tsvector", "tsquery", "int4range"}
+		types := []string{"money", "xml", "cidr", "macaddr", "hstore", "tsvector", "tsquery", "int4range", "json", "jsonb"}
 		for _, typ := range types {
 			t.Run(typ, func(t *testing.T) {
 				dir := t.TempDir()

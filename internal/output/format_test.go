@@ -16,6 +16,7 @@ import (
 func TestPrintPlan(t *testing.T) {
 	color.NoColor = true
 	defer func() { color.NoColor = false }()
+
 	t.Run("empty plan", func(t *testing.T) {
 		out := captureStdout(t, func() {
 			PrintPlan(schema.Plan{})

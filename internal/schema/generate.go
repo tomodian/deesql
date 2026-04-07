@@ -57,10 +57,6 @@ func generateDropTable(name string) string {
 	return fmt.Sprintf("DROP TABLE %s", name)
 }
 
-func generateDropColumn(table, column string) string {
-	return fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, column)
-}
-
 func generateAddColumn(table string, col Column) string {
 	return fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, generateColumnDef(col))
 }

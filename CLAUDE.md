@@ -17,10 +17,11 @@ migrate/
   main.go                       # Entry point
   cli/
     root.go                     # Root urfave/cli v3 app + shared flags
+    consts.go                   # Flag name constants and defaults
     plan.go                     # "plan" subcommand
     apply.go                    # "apply" subcommand
     verify.go                   # "verify" subcommand
-    helpers.go                  # Flag extraction and validation helpers
+    helpers.go                  # Flag extraction, schema resolution, verification
   internal/
     dsqlconn/
       conn.go                   # IAM token generation + *sql.DB creation
@@ -36,6 +37,7 @@ migrate/
       plan.go                   # Plan, Statement, Action, Hazard types
     output/format.go            # Plan output formatting (Terraform-style summary)
     verify/verify.go            # Regex-based DSQL compatibility checker
+    ui/ui.go                    # Colored terminal output helpers
   tests/
     simple/                     # Example desired-state schema files
 ```
@@ -46,13 +48,18 @@ migrate/
 - `github.com/jackc/pgx/v4` — PostgreSQL driver
 - `github.com/jackc/pgconn` — low-level PG connection (fallback configs)
 - `github.com/go-playground/validator/v10` — struct validation
-- `github.com/aws/aws-sdk-go-v2`, `config`, `credentials/stscreds`, `feature/dsql/auth`, `service/sts` — IAM auth and role assumption
+- `github.com/fatih/color` — colored terminal output
+- `github.com/aws/aws-sdk-go-v2`, `config`, `credentials`, `feature/dsql/auth`, `service/sts` — IAM auth and role assumption
+- `github.com/DATA-DOG/go-sqlmock` — SQL mock for testing
+- `github.com/stretchr/testify` — test assertions
 
 ## Aurora DSQL Constraints
 
+Official reference: [Aurora DSQL supported SQL subsets](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-postgresql-compatibility-supported-sql-subsets.html) | [Unsupported features](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-postgresql-compatibility-unsupported-features.html) | [ALTER TABLE syntax](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/alter-table-syntax-support.html)
+
 - **No `CREATE DATABASE`**: Only the `postgres` database exists per cluster.
 - **No `CREATE INDEX`**: Use `CREATE INDEX ASYNC` instead (only btree).
-- **No `SET` for configuration parameters**: `statement_timeout`, `lock_timeout` etc. are not supported.
+- **No `SET` for session parameters**: `statement_timeout`, `lock_timeout` etc. are not supported.
 - **Max 1 DDL per transaction**: Each DDL statement runs in its own implicit transaction.
 - **IAM authentication**: Passwords are IAM-signed presigned URL tokens.
 - **TLS required**: All connections use `sslmode=require`.
@@ -63,18 +70,23 @@ migrate/
 - **No table partitioning or inheritance** (DSQL auto-partitions).
 - **Functions**: only `LANGUAGE SQL` supported.
 
-## ALTER TABLE Support
+## Supported DDL Operations
 
-| Operation | Supported |
-|-----------|-----------|
-| ADD COLUMN | Yes |
-| DROP COLUMN | Yes (except shard key / PK columns) |
-| RENAME COLUMN | Yes |
-| RENAME TABLE | Yes |
-| Identity modifications | Yes |
-| ALTER COLUMN TYPE | No |
-| SET/DROP NOT NULL | No |
-| SET/DROP DEFAULT | No |
+The diff engine generates these DDL statements:
+
+| Operation | Supported | Notes |
+|-----------|-----------|-------|
+| CREATE TABLE | Yes | |
+| DROP TABLE | Yes | Hazard: `DELETES_DATA` |
+| ADD COLUMN | Yes | |
+| DROP COLUMN | No | Error at plan time |
+| ALTER COLUMN TYPE | No | Error at plan time |
+| SET/DROP NOT NULL | No | Error at plan time |
+| SET/DROP DEFAULT | No | Error at plan time |
+| PRIMARY KEY change | No | Error at plan time |
+| ADD/DROP CONSTRAINT | Yes | UNIQUE and CHECK only |
+| CREATE INDEX ASYNC | Yes | Hazard: `INDEX_BUILD` |
+| DROP INDEX | Yes | Hazard: `INDEX_DROPPED` |
 
 ## Connection Details
 
@@ -83,7 +95,7 @@ migrate/
 - Region auto-detected from endpoint hostname (`*.dsql.<region>.on.aws`).
 - IAM tokens default to 15-minute expiry; connections remain valid after token expires.
 - DNS resolved to all IPs; pgx fallback configs try each IP on connection failure.
-- AWS credentials resolved via default chain: env vars → shared config → IMDS. Optional `--profile` and `--role-arn`.
+- AWS credentials resolved via default chain (env vars → shared config → IMDS); optional `--profile` and `--role-arn` for override/assumption.
 
 ## CLI Flags
 
@@ -94,7 +106,7 @@ migrate/
 | `--endpoint` | Aurora DSQL cluster endpoint | (required) |
 | `--region` | AWS region | auto-detected from endpoint |
 | `--user` | Database user | `admin` |
-| `--schema` | Directories with desired-state `.sql` files (repeatable) | (required) |
+| `--schema` | `.sql` files or directories (repeatable) | (required) |
 | `--profile` | AWS profile name | `$AWS_PROFILE` |
 | `--role-arn` | AWS IAM role ARN to assume via STS | (none) |
 | `--connect-timeout` | Database connection timeout | `10s` |
@@ -104,7 +116,7 @@ migrate/
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--allow-hazards` | Hazard types to permit (e.g. `INDEX_BUILD,DELETES_DATA`) | (none) |
-| `--skip-confirm` | Skip confirmation prompt | `false` |
+| `--force` | Apply without confirmation prompt | `false` |
 
 ## Migration Design
 
@@ -112,7 +124,7 @@ migrate/
 - **No temp database**: SQL files are parsed in-process (regex-based), not executed against any database.
 - **Custom schema diffing**: Parses `.sql` files into models, introspects live schema via `pg_catalog`, and diffs in-process.
 - **7-phase DDL ordering**: DROP INDEX → DROP CONSTRAINT → DROP TABLE → CREATE TABLE → ADD COLUMN → ADD CONSTRAINT → CREATE INDEX ASYNC.
-- **Unsupported ALTER operations**: DROP COLUMN, ALTER COLUMN TYPE, SET/DROP NOT NULL, SET/DROP DEFAULT, and PRIMARY KEY changes are errors (Aurora DSQL limitations).
+- **Unsupported operations** (error at plan time): DROP COLUMN, ALTER COLUMN TYPE, SET/DROP NOT NULL, SET/DROP DEFAULT, PRIMARY KEY changes.
 - **No transactions**: Each statement executes independently; DSQL limits 1 DDL per transaction.
 
 ## Change Actions (Terraform-style)
@@ -148,6 +160,7 @@ migrate/
 go build -o dsql-migrate .
 ./dsql-migrate plan --endpoint <endpoint> --schema ./schema
 ./dsql-migrate apply --endpoint <endpoint> --schema ./schema
+./dsql-migrate apply --endpoint <endpoint> --schema ./schema --force
 ./dsql-migrate verify --schema ./schema
 ```
 

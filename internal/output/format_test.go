@@ -8,11 +8,17 @@ import (
 
 	"tomodian/dsql-migrate/internal/schema"
 
+	"github.com/fatih/color"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPrintPlan(t *testing.T) {
+	// Disable color so ANSI codes don't interfere with string matching,
+	// and all output goes through fmt to the captured stdout.
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = false })
+
 	t.Run("empty plan", func(t *testing.T) {
 		out := captureStdout(t, func() {
 			PrintPlan(schema.Plan{})

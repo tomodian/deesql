@@ -21,22 +21,22 @@ var (
 // PrintPlan displays a migration plan to stdout with colored Terraform-style summary.
 func PrintPlan(plan schema.Plan) {
 	if len(plan.Statements) == 0 {
-		green.Println("No changes detected. Schema is up to date.")
+		fmt.Println(green.Sprint("No changes detected. Schema is up to date."))
 		return
 	}
 
 	fmt.Println()
-	bold.Printf("Migration plan (%d statement(s)):\n", len(plan.Statements))
+	fmt.Println(bold.Sprintf("Migration plan (%d statement(s)):", len(plan.Statements)))
 	fmt.Println(strings.Repeat("-", 60))
 
 	for i, stmt := range plan.Statements {
 		fmt.Println()
-		actionColor(stmt.Action).Printf("  %s %s\n", actionLabel(stmt.Action), stmt.Resource)
-		dim.Printf("    -- Statement %d\n", i+1)
+		fmt.Println(actionColor(stmt.Action).Sprintf("  %s %s", actionLabel(stmt.Action), stmt.Resource))
+		fmt.Println(dim.Sprintf("    -- Statement %d", i+1))
 		fmt.Printf("    %s\n", stmt.ToSQL())
 
 		for _, h := range stmt.Hazards {
-			yellow.Printf("    -- ⚠ %s: %s\n", h.Type, h.Message)
+			fmt.Println(yellow.Sprintf("    -- ⚠ %s: %s", h.Type, h.Message))
 		}
 	}
 
@@ -92,21 +92,20 @@ func printSummary(plan schema.Plan) {
 		parts = append(parts, cyan.Sprintf("%d to replace", n))
 	}
 
-	bold.Print("Plan: ")
-	fmt.Printf("%s.\n", strings.Join(parts, ", "))
+	fmt.Printf("%s%s.\n", bold.Sprint("Plan: "), strings.Join(parts, ", "))
 
 	fmt.Println()
-	dim.Println("Legend:")
+	fmt.Println(dim.Sprint("Legend:"))
 	if counts[schema.ActionCreate] > 0 {
-		green.Println("  +   Create")
+		fmt.Println(green.Sprint("  +   Create"))
 	}
 	if counts[schema.ActionUpdate] > 0 {
-		yellow.Println("  ~   Update")
+		fmt.Println(yellow.Sprint("  ~   Update"))
 	}
 	if counts[schema.ActionDestroy] > 0 {
-		red.Println("  -   Destroy")
+		fmt.Println(red.Sprint("  -   Destroy"))
 	}
 	if counts[schema.ActionReplace] > 0 {
-		cyan.Println("  +/- Replace")
+		fmt.Println(cyan.Sprint("  +/- Replace"))
 	}
 }

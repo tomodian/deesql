@@ -1,0 +1,45 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+  issues: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Bump version
+        uses: paulhatch/semantic-version@8d3552d38408b608e90e76237a2a5ac9fe524d04 # v5.3.0
+        id: semantic
+        with:
+          tag_prefix: ""
+          major_pattern: "MAJOR:"
+          major_regexp_flags: ""
+          minor_pattern: ""
+          minor_regexp_flags: ""
+
+      - name: Show bump results
+        run: |
+          echo "version:          ${{ steps.semantic.outputs.version }}"          # e.g. 0.2.0
+          echo "version_tag:      ${{ steps.semantic.outputs.version_tag }}"      # e.g. 0.2.0
+          echo "previous_version: ${{ steps.semantic.outputs.previous_version }}" # e.g. 0.1.0
+          echo "increment:        ${{ steps.semantic.outputs.increment }}"        # e.g. 10
+          echo "changed:          ${{ steps.semantic.outputs.changed }}"          # e.g. true / false
+          echo "current-sha:      ${{ steps.semantic.outputs.current_commit }}"   # e.g. e909b0f5089bae7c8b7e22def69da02962b842fd
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
+        with:
+          tag: ${{ steps.semantic.outputs.version_tag }}
+          allowUpdates: false
+          generateReleaseNotes: true
+          skipIfReleaseExists: true

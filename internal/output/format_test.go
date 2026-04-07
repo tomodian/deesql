@@ -8,11 +8,14 @@ import (
 
 	"tomodian/dsql-migrate/internal/schema"
 
+	"github.com/fatih/color"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPrintPlan(t *testing.T) {
+	color.NoColor = true
+	defer func() { color.NoColor = false }()
 	t.Run("empty plan", func(t *testing.T) {
 		out := captureStdout(t, func() {
 			PrintPlan(schema.Plan{})
@@ -103,15 +106,23 @@ func TestPrintPlan(t *testing.T) {
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stdout
+	oldStdout := os.Stdout
+	oldColorOut := color.Output
+	oldColorErr := color.Error
+
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
+
 	os.Stdout = w
+	color.Output = w
+	color.Error = w
 
 	fn()
 
 	w.Close()
-	os.Stdout = old
+	os.Stdout = oldStdout
+	color.Output = oldColorOut
+	color.Error = oldColorErr
 
 	var buf bytes.Buffer
 	_, err = io.Copy(&buf, r)

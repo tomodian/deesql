@@ -71,7 +71,7 @@ func TestDiff(t *testing.T) {
 		assert.Contains(t, out.Plan.Statements[0].DDL, "ADD COLUMN email")
 	})
 
-	t.Run("drop column returns error", func(t *testing.T) {
+	t.Run("drop column generates statement", func(t *testing.T) {
 		current := Schema{Tables: []Table{{
 			Name: "users",
 			Columns: []Column{
@@ -86,9 +86,12 @@ func TestDiff(t *testing.T) {
 			PrimaryKey: &PrimaryKey{Name: "users_pkey", Columns: []string{"id"}},
 		}}}
 
-		_, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "DROP COLUMN not supported")
+		out, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
+		assert.NoError(t, err)
+		require.Len(t, out.Plan.Statements, 1)
+		assert.Contains(t, out.Plan.Statements[0].DDL, "DROP COLUMN email")
+		assert.Equal(t, ActionUpdate, out.Plan.Statements[0].Action)
+		assert.Equal(t, HazardDeletesData, out.Plan.Statements[0].Hazards[0].Type)
 	})
 
 	t.Run("alter column type returns error", func(t *testing.T) {

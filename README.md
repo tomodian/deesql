@@ -198,7 +198,7 @@ Credentials are resolved via the standard [AWS SDK default credential chain](htt
 | Create table | Yes |
 | Drop table | Yes |
 | Add column | Yes |
-| Drop column | Yes |
+| Drop column | No (DSQL limitation) |
 | Add/drop index | Yes (`CREATE INDEX ASYNC`) |
 | Add/drop check constraint | Yes |
 | Add/drop unique constraint | Yes |

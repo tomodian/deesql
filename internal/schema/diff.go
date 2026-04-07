@@ -38,7 +38,6 @@ func Diff(ctx context.Context, in DiffInput) (*DiffOutput, error) {
 		dropConstraints []Statement
 		dropTables      []Statement
 		createTables    []Statement
-		dropColumns     []Statement
 		addColumns      []Statement
 		addConstraints  []Statement
 		createIndexes   []Statement
@@ -92,8 +91,6 @@ func Diff(ctx context.Context, in DiffInput) (*DiffOutput, error) {
 				dropIndexes = append(dropIndexes, s)
 			case catDropConstraint:
 				dropConstraints = append(dropConstraints, s)
-			case catDropColumn:
-				dropColumns = append(dropColumns, s)
 			case catAddColumn:
 				addColumns = append(addColumns, s)
 			case catAddConstraint:
@@ -109,7 +106,6 @@ func Diff(ctx context.Context, in DiffInput) (*DiffOutput, error) {
 	stmts = append(stmts, dropConstraints...)
 	stmts = append(stmts, dropTables...)
 	stmts = append(stmts, createTables...)
-	stmts = append(stmts, dropColumns...)
 	stmts = append(stmts, addColumns...)
 	stmts = append(stmts, addConstraints...)
 	stmts = append(stmts, createIndexes...)
@@ -127,12 +123,9 @@ func diffTable(current, desired Table) ([]Statement, error) {
 
 	for _, cc := range current.Columns {
 		if _, exists := desiredCols[cc.Name]; !exists {
-			stmts = append(stmts, Statement{
-				DDL:      generateDropColumn(desired.Name, cc.Name),
-				Action:   ActionUpdate,
-				Resource: "table." + desired.Name,
-				Hazards:  []Hazard{{Type: HazardDeletesData, Message: fmt.Sprintf("Drops column %s.%s and all its data", desired.Name, cc.Name)}},
-			})
+			return nil, fmt.Errorf(
+				"DROP COLUMN not supported by Aurora DSQL: cannot drop column %s.%s",
+				current.Name, cc.Name)
 		}
 	}
 
@@ -337,7 +330,6 @@ type stmtCategory int
 const (
 	catDropIndex stmtCategory = iota
 	catDropConstraint
-	catDropColumn
 	catAddColumn
 	catAddConstraint
 	catCreateIndex
@@ -350,8 +342,6 @@ func categorize(ddl string) stmtCategory {
 		return catDropIndex
 	case strings.Contains(upper, "DROP CONSTRAINT"):
 		return catDropConstraint
-	case strings.Contains(upper, "DROP COLUMN"):
-		return catDropColumn
 	case strings.Contains(upper, "ADD COLUMN"):
 		return catAddColumn
 	case strings.HasPrefix(upper, "CREATE") && strings.Contains(upper, "INDEX"):

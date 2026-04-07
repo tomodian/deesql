@@ -1,3 +1,5 @@
+[![test](https://github.com/tomodian/dsql-migrate/actions/workflows/test.yml/badge.svg)](https://github.com/tomodian/dsql-migrate/actions/workflows/test.yml) [![docker](https://github.com/tomodian/dsql-migrate/actions/workflows/docker.yml/badge.svg)](https://github.com/tomodian/dsql-migrate/actions/workflows/docker.yml)
+
 # dsql-migrate
 
 Schema migration tool for [Amazon Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/).

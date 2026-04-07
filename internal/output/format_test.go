@@ -14,10 +14,8 @@ import (
 )
 
 func TestPrintPlan(t *testing.T) {
-	// Disable color so ANSI codes don't interfere with string matching,
-	// and all output goes through fmt to the captured stdout.
 	color.NoColor = true
-	t.Cleanup(func() { color.NoColor = false })
+	defer func() { color.NoColor = false }()
 
 	t.Run("empty plan", func(t *testing.T) {
 		out := captureStdout(t, func() {
@@ -109,15 +107,23 @@ func TestPrintPlan(t *testing.T) {
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stdout
+	oldStdout := os.Stdout
+	oldColorOut := color.Output
+	oldColorErr := color.Error
+
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
+
 	os.Stdout = w
+	color.Output = w
+	color.Error = w
 
 	fn()
 
 	w.Close()
-	os.Stdout = old
+	os.Stdout = oldStdout
+	color.Output = oldColorOut
+	color.Error = oldColorErr
 
 	var buf bytes.Buffer
 	_, err = io.Copy(&buf, r)

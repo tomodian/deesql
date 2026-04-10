@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"tomodian/dsql-migrate/internal/verify"
+	"tomodian/deesql/internal/verify"
 
 	"github.com/urfave/cli/v3"
 )

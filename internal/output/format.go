@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"tomodian/dsql-migrate/internal/schema"
+	"tomodian/deesql/internal/schema"
 
 	"github.com/fatih/color"
 )

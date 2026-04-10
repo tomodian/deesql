@@ -1,10 +1,10 @@
 .PHONY: build run test
 
 build:
-	go build -o dsql-migrate .
+	go build -o deesql .
 
 run: build
-	./dsql-migrate $(ARGS)
+	./deesql $(ARGS)
 
 test:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...

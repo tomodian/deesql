@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"tomodian/dsql-migrate/internal/schema"
+	"tomodian/deesql/internal/schema"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"

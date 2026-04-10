@@ -10,10 +10,10 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /dsql-migrate .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /deesql .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=builder /dsql-migrate /usr/local/bin/dsql-migrate
+COPY --from=builder /deesql /usr/local/bin/deesql
 
-ENTRYPOINT ["dsql-migrate"]
+ENTRYPOINT ["deesql"]

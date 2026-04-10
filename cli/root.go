@@ -4,7 +4,7 @@ import "github.com/urfave/cli/v3"
 
 func App() *cli.Command {
 	return &cli.Command{
-		Name:  "dsql-migrate",
+		Name:  "deesql",
 		Usage: "Schema migration tool for Amazon Aurora DSQL",
 		Flags: []cli.Flag{
 			&cli.StringFlag{

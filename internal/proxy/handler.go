@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgproto3/v2"
 
-	"tomodian/dsql-migrate/internal/ui"
+	"tomodian/deesql/internal/ui"
 )
 
 const (

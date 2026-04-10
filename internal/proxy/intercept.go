@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"tomodian/dsql-migrate/internal/rules"
+	"tomodian/deesql/internal/rules"
 )
 
 var (

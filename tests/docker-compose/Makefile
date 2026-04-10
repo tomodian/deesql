@@ -20,6 +20,12 @@ DEESQL_AWS = \
 	-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
 	-e AWS_REGION=$(DSQL_REGION)
 
+DEESQL_DSQL = docker run --rm \
+	-v $(CURDIR)/schema:/schema:ro \
+	-v $(CURDIR)/cleanup.sql:/cleanup.sql:ro \
+	$(DEESQL_AWS) \
+	$(IMAGE)
+
 # --- Local proxy test ---
 
 test-docker: build clean
@@ -44,12 +50,7 @@ test-docker: build clean
 	@echo "All tests passed."
 	@docker compose down -v 2>/dev/null
 
-# --- Real Aurora DSQL test ---
-# Uses only the deesql CLI — no psql dependency.
-# 1. verify: check schema files for DSQL compatibility
-# 2. apply: deploy schema to real DSQL cluster
-# 3. plan: verify schema matches (idempotent — no changes expected)
-# 4. apply --schema empty: drop all tables to clean up
+# --- Real Aurora DSQL test (deesql CLI only, no psql) ---
 
 test-dsql: build
 ifndef DSQL
@@ -58,44 +59,30 @@ endif
 	@eval $$(aws configure export-credentials --format env $(if $(AWS_PROFILE),--profile $(AWS_PROFILE),) 2>/dev/null) || true; \
 	echo "Connecting to $(DSQL) (region: $(DSQL_REGION), user: $(DSQL_USER))"; \
 	echo ""; \
-	echo "=== Verifying schema ==="; \
-	docker run --rm \
-		-v $(CURDIR)/schema:/schema:ro \
-		$(IMAGE) verify --schema /schema && \
+	echo "=== Verifying schema ===" && \
+	$(DEESQL_DSQL) verify --schema /schema && \
 	echo "" && \
 	echo "=== Applying schema ===" && \
-	docker run --rm \
-		-v $(CURDIR)/schema:/schema:ro \
-		$(DEESQL_AWS) \
-		$(IMAGE) apply \
-			--endpoint $(DSQL) \
-			--region $(DSQL_REGION) \
-			--user $(DSQL_USER) \
-			--schema /schema \
-			--allow-hazards INDEX_BUILD \
-			--force && \
+	$(DEESQL_DSQL) apply \
+		--endpoint $(DSQL) \
+		--region $(DSQL_REGION) \
+		--user $(DSQL_USER) \
+		--schema /schema \
+		--allow-hazards INDEX_BUILD \
+		--force && \
 	echo "" && \
-	echo "=== Verifying schema is applied (plan should show no changes) ===" && \
-	docker run --rm \
-		-v $(CURDIR)/schema:/schema:ro \
-		$(DEESQL_AWS) \
-		$(IMAGE) plan \
-			--endpoint $(DSQL) \
-			--region $(DSQL_REGION) \
-			--user $(DSQL_USER) \
-			--schema /schema && \
+	echo "=== Verifying no drift ===" && \
+	$(DEESQL_DSQL) plan \
+		--endpoint $(DSQL) \
+		--region $(DSQL_REGION) \
+		--user $(DSQL_USER) \
+		--schema /schema && \
 	echo "" && \
 	echo "=== Cleaning up DSQL ===" && \
-	docker run --rm \
-		-v $(CURDIR)/cleanup_schema:/schema:ro \
-		$(DEESQL_AWS) \
-		$(IMAGE) apply \
-			--endpoint $(DSQL) \
-			--region $(DSQL_REGION) \
-			--user $(DSQL_USER) \
-			--schema /schema \
-			--allow-hazards DELETES_DATA \
-			--force && \
+	$(DEESQL_DSQL) sql /cleanup.sql \
+		--endpoint $(DSQL) \
+		--region $(DSQL_REGION) \
+		--user $(DSQL_USER) && \
 	echo "" && \
 	echo "All tests passed on Aurora DSQL."
 

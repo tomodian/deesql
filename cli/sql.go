@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"tomodian/deesql/internal/dsqlconn"
 	"tomodian/deesql/internal/ui"
@@ -17,6 +18,18 @@ func sqlCmd() *cli.Command {
 		Name:      "sql",
 		Usage:     "Execute raw SQL file against Aurora DSQL",
 		ArgsUsage: "<file.sql>",
+		Flags: []cli.Flag{
+			&cli.IntFlag{
+				Name:  FlagRetries,
+				Usage: "Max retries on OCC conflict (SQLSTATE 40001)",
+				Value: DefaultRetries,
+			},
+			&cli.DurationFlag{
+				Name:  FlagRetryDelay,
+				Usage: "Initial delay between retries (doubles each attempt)",
+				Value: DefaultRetryDelay,
+			},
+		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if cmd.String(FlagEndpoint) == "" {
 				return fmt.Errorf("--%s is required", FlagEndpoint)
@@ -40,11 +53,13 @@ func sqlCmd() *cli.Command {
 			stmts := splitSQL(string(data))
 			ui.Info("Executing %d statement(s) from %s", len(stmts), filePath)
 
+			maxRetries := int(cmd.Int(FlagRetries))
+			retryDelay := cmd.Duration(FlagRetryDelay)
+
 			for i, stmt := range stmts {
 				ui.Dim("  (%d/%d) %s\n", i+1, len(stmts), truncateStmt(stmt))
-				if _, err := out.DB.ExecContext(ctx, stmt); err != nil {
-					ui.Error("Statement %d failed: %v", i+1, err)
-					return fmt.Errorf("statement %d failed: %w", i+1, err)
+				if err := execWithRetry(ctx, out, stmt, i+1, maxRetries, retryDelay); err != nil {
+					return err
 				}
 			}
 
@@ -72,6 +87,32 @@ func splitSQL(sql string) []string {
 		}
 	}
 	return stmts
+}
+
+func execWithRetry(ctx context.Context, out *dsqlconn.ConnectOutput, stmt string, num int, maxRetries int, baseDelay time.Duration) error {
+	delay := baseDelay
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		_, err := out.DB.ExecContext(ctx, stmt)
+		if err == nil {
+			return nil
+		}
+
+		if strings.Contains(err.Error(), "40001") && attempt < maxRetries {
+			ui.Warn("Statement %d: OCC conflict, retrying in %s (%d/%d)...", num, delay, attempt+1, maxRetries)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+			delay *= 2
+			continue
+		}
+
+		ui.Error("Statement %d failed: %v", num, err)
+		return fmt.Errorf("statement %d failed: %w", num, err)
+	}
+	return nil
 }
 
 func truncateStmt(s string) string {

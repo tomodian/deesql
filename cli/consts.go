@@ -15,6 +15,8 @@ const (
 	FlagForce          = "force"
 	FlagListen         = "listen"
 	FlagUpstream       = "upstream"
+	FlagRetries        = "retries"
+	FlagRetryDelay     = "retry-delay"
 )
 
 // Defaults.
@@ -23,4 +25,6 @@ const (
 	DefaultConnectTimeout = 10 * time.Second
 	DefaultListen         = ":15432"
 	DefaultUpstream       = "localhost:5432"
+	DefaultRetries        = 5
+	DefaultRetryDelay     = 2 * time.Second
 )

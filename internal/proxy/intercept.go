@@ -12,6 +12,9 @@ var (
 	// doesn't support negative lookahead.
 	createIndexRe      = regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+`)
 	createIndexAsyncRe = regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+ASYNC\b`)
+
+	// rewriteAsyncRe replaces ASYNC with CONCURRENTLY for the PostgreSQL backend.
+	rewriteAsyncRe = regexp.MustCompile(`(?i)(\bCREATE\s+(UNIQUE\s+)?INDEX\s+)ASYNC\s+`)
 )
 
 // proxyOnlyBefore are proxy-specific rules that must be checked before shared
@@ -60,6 +63,17 @@ var proxyOnlyAfter = []rules.Rule{
 
 	// Explicit locking (DSQL uses OCC, no pessimistic locking)
 	{Name: "LOCK TABLE statements are unsupported", Pattern: regexp.MustCompile(`(?i)\bLOCK\s+TABLE\b`)},
+
+	// SET session parameters (DSQL does not support most SET commands)
+	{Name: "SET statement_timeout is unsupported", Pattern: regexp.MustCompile(`(?i)\bSET\s+(LOCAL\s+)?statement_timeout\b`)},
+	{Name: "SET lock_timeout is unsupported", Pattern: regexp.MustCompile(`(?i)\bSET\s+(LOCAL\s+)?lock_timeout\b`)},
+	{Name: "SET idle_in_transaction_session_timeout is unsupported", Pattern: regexp.MustCompile(`(?i)\bSET\s+(LOCAL\s+)?idle_in_transaction_session_timeout\b`)},
+
+	// Isolation level (only REPEATABLE READ supported)
+	{Name: "only ISOLATION LEVEL REPEATABLE READ is supported", Pattern: regexp.MustCompile(`(?i)\bISOLATION\s+LEVEL\s+(READ\s+COMMITTED|READ\s+UNCOMMITTED|SERIALIZABLE)\b`)},
+
+	// ANALYZE without table name
+	{Name: "ANALYZE requires a table name", Pattern: regexp.MustCompile(`(?i)^\s*ANALYZE\s*$`)},
 }
 
 // allProxyRules combines proxy-specific (before) + shared + proxy-specific (after)
@@ -90,6 +104,76 @@ func Check(sql string) string {
 			return "CREATE INDEX must use ASYNC (use CREATE INDEX ASYNC)"
 		}
 	}
+	return ""
+}
+
+// Rewrite converts DSQL-specific SQL to PostgreSQL-compatible SQL.
+// CREATE [UNIQUE] INDEX ASYNC → CREATE [UNIQUE] INDEX CONCURRENTLY.
+func Rewrite(sql string) string {
+	return rewriteAsyncRe.ReplaceAllString(sql, "${1}CONCURRENTLY ")
+}
+
+// TxState tracks transaction state for DDL/DML enforcement warnings.
+type TxState struct {
+	InTx   bool
+	HasDDL bool
+	HasDML bool
+}
+
+var (
+	beginRe  = regexp.MustCompile(`(?i)^\s*(BEGIN|START\s+TRANSACTION)\b`)
+	commitRe = regexp.MustCompile(`(?i)^\s*(COMMIT|ROLLBACK|END|ABORT)\b`)
+	ddlRe    = regexp.MustCompile(`(?i)^\s*(CREATE|ALTER|DROP)\b`)
+	dmlRe    = regexp.MustCompile(`(?i)^\s*(INSERT|UPDATE|DELETE)\b`)
+)
+
+// TrackTx updates transaction state and returns a warning message if the
+// statement would violate DSQL's transaction rules, or "" if okay.
+func (tx *TxState) TrackTx(sql string) string {
+	stmt := strings.TrimSpace(sql)
+	if stmt == "" {
+		return ""
+	}
+
+	if beginRe.MatchString(stmt) {
+		tx.InTx = true
+		tx.HasDDL = false
+		tx.HasDML = false
+		return ""
+	}
+
+	if commitRe.MatchString(stmt) {
+		tx.InTx = false
+		tx.HasDDL = false
+		tx.HasDML = false
+		return ""
+	}
+
+	if !tx.InTx {
+		return ""
+	}
+
+	if ddlRe.MatchString(stmt) {
+		if tx.HasDML {
+			tx.HasDDL = true
+			return "mixed DDL and DML in one transaction — would fail on Aurora DSQL"
+		}
+		if tx.HasDDL {
+			return "multiple DDL statements in one transaction — would fail on Aurora DSQL"
+		}
+		tx.HasDDL = true
+		return ""
+	}
+
+	if dmlRe.MatchString(stmt) {
+		if tx.HasDDL {
+			tx.HasDML = true
+			return "mixed DDL and DML in one transaction — would fail on Aurora DSQL"
+		}
+		tx.HasDML = true
+		return ""
+	}
+
 	return ""
 }
 

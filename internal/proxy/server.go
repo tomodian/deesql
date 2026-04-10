@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"net"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -21,6 +22,19 @@ type RunInput struct {
 func Run(ctx context.Context, in RunInput) error {
 	if err := validator.New().Struct(in); err != nil {
 		return err
+	}
+
+	// Detect bypass mode from environment variables.
+	// When POSTGRES_USER is set, the proxy accepts any client auth and
+	// connects to the backend using the env-var credentials.
+	var bypass *BypassConfig
+	if pgUser := os.Getenv("POSTGRES_USER"); pgUser != "" {
+		bypass = &BypassConfig{
+			User:     pgUser,
+			Password: os.Getenv("POSTGRES_PASSWORD"),
+			Database: os.Getenv("POSTGRES_DB"),
+		}
+		ui.Info("Auth bypass enabled (POSTGRES_USER=%s)", pgUser)
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
@@ -54,6 +68,6 @@ func Run(ctx context.Context, in RunInput) error {
 				continue
 			}
 		}
-		go handleConnection(ctx, conn, in.UpstreamAddr)
+		go handleConnection(ctx, conn, in.UpstreamAddr, bypass)
 	}
 }

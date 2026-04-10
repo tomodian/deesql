@@ -322,7 +322,7 @@ func constraintKey(cols []string) string {
 }
 
 func indexKey(idx Index) string {
-	return fmt.Sprintf("%v:%v", idx.Columns, idx.IsUnique)
+	return fmt.Sprintf("%v:%v:%v", idx.Columns, idx.IncludeColumns, idx.IsUnique)
 }
 
 type stmtCategory int

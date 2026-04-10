@@ -91,8 +91,12 @@ func TestCheck(t *testing.T) {
 		assert.Equal(t, "CREATE TABLE INHERITS is unsupported", Check("CREATE TABLE child (extra text) INHERITS (parent)"))
 	})
 
-	t.Run("PARTITION BY blocked", func(t *testing.T) {
+	t.Run("PARTITION BY in CREATE TABLE blocked", func(t *testing.T) {
 		assert.Equal(t, "CREATE TABLE PARTITION is unsupported", Check("CREATE TABLE t (id int) PARTITION BY RANGE (id)"))
+	})
+
+	t.Run("PARTITION BY in window function allowed", func(t *testing.T) {
+		assert.Empty(t, Check("SELECT RANK() OVER (PARTITION BY project_id ORDER BY priority) FROM tasks"))
 	})
 
 	t.Run("COLLATE blocked", func(t *testing.T) {
@@ -227,6 +231,138 @@ func TestCheck(t *testing.T) {
 
 	t.Run("whitespace only allowed", func(t *testing.T) {
 		assert.Empty(t, Check("   ;  ;  "))
+	})
+}
+
+func TestRewrite(t *testing.T) {
+	t.Run("CREATE INDEX ASYNC to CONCURRENTLY", func(t *testing.T) {
+		assert.Equal(t, "CREATE INDEX CONCURRENTLY idx ON t (col)", Rewrite("CREATE INDEX ASYNC idx ON t (col)"))
+	})
+
+	t.Run("CREATE UNIQUE INDEX ASYNC to CONCURRENTLY", func(t *testing.T) {
+		assert.Equal(t, "CREATE UNIQUE INDEX CONCURRENTLY idx ON t (col)", Rewrite("CREATE UNIQUE INDEX ASYNC idx ON t (col)"))
+	})
+
+	t.Run("case insensitive", func(t *testing.T) {
+		assert.Equal(t, "create index CONCURRENTLY idx ON t (col)", Rewrite("create index async idx ON t (col)"))
+	})
+
+	t.Run("non-index SQL unchanged", func(t *testing.T) {
+		assert.Equal(t, "SELECT 1", Rewrite("SELECT 1"))
+	})
+
+	t.Run("CREATE INDEX without ASYNC unchanged", func(t *testing.T) {
+		assert.Equal(t, "CREATE INDEX idx ON t (col)", Rewrite("CREATE INDEX idx ON t (col)"))
+	})
+}
+
+func TestCheckSessionParams(t *testing.T) {
+	t.Run("SET statement_timeout blocked", func(t *testing.T) {
+		assert.Equal(t, "SET statement_timeout is unsupported", Check("SET statement_timeout = 5000"))
+	})
+
+	t.Run("SET LOCAL statement_timeout blocked", func(t *testing.T) {
+		assert.Equal(t, "SET statement_timeout is unsupported", Check("SET LOCAL statement_timeout = 5000"))
+	})
+
+	t.Run("SET lock_timeout blocked", func(t *testing.T) {
+		assert.Equal(t, "SET lock_timeout is unsupported", Check("SET lock_timeout = 5000"))
+	})
+
+	t.Run("SET idle_in_transaction_session_timeout blocked", func(t *testing.T) {
+		assert.Contains(t, Check("SET idle_in_transaction_session_timeout = 5000"), "unsupported")
+	})
+
+	t.Run("SET TimeZone allowed", func(t *testing.T) {
+		assert.Empty(t, Check("SET TimeZone = 'UTC'"))
+	})
+
+	t.Run("isolation level READ COMMITTED blocked", func(t *testing.T) {
+		assert.Equal(t, "only ISOLATION LEVEL REPEATABLE READ is supported", Check("BEGIN ISOLATION LEVEL READ COMMITTED"))
+	})
+
+	t.Run("isolation level SERIALIZABLE blocked", func(t *testing.T) {
+		assert.Equal(t, "only ISOLATION LEVEL REPEATABLE READ is supported", Check("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+	})
+
+	t.Run("isolation level REPEATABLE READ allowed", func(t *testing.T) {
+		assert.Empty(t, Check("BEGIN ISOLATION LEVEL REPEATABLE READ"))
+	})
+
+	t.Run("bare ANALYZE blocked", func(t *testing.T) {
+		assert.Equal(t, "ANALYZE requires a table name", Check("ANALYZE"))
+	})
+
+	t.Run("ANALYZE with table allowed", func(t *testing.T) {
+		assert.Empty(t, Check("ANALYZE users"))
+	})
+}
+
+func TestTxState(t *testing.T) {
+	t.Run("no warning outside transaction", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("CREATE TABLE t (id int)"))
+		assert.Empty(t, tx.TrackTx("INSERT INTO t VALUES (1)"))
+	})
+
+	t.Run("single DDL in transaction ok", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE t (id int)"))
+		assert.Empty(t, tx.TrackTx("COMMIT"))
+	})
+
+	t.Run("multiple DDL warns", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE a (id int)"))
+		assert.Contains(t, tx.TrackTx("CREATE TABLE b (id int)"), "multiple DDL")
+	})
+
+	t.Run("mixed DDL then DML warns", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE t (id int)"))
+		assert.Contains(t, tx.TrackTx("INSERT INTO t VALUES (1)"), "mixed DDL and DML")
+	})
+
+	t.Run("mixed DML then DDL warns", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("INSERT INTO t VALUES (1)"))
+		assert.Contains(t, tx.TrackTx("CREATE TABLE t (id int)"), "mixed DDL and DML")
+	})
+
+	t.Run("reset after commit", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE a (id int)"))
+		assert.Empty(t, tx.TrackTx("COMMIT"))
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE b (id int)"))
+	})
+
+	t.Run("reset after rollback", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE a (id int)"))
+		assert.Empty(t, tx.TrackTx("ROLLBACK"))
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE b (id int)"))
+	})
+
+	t.Run("SELECT does not trigger warnings", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("BEGIN"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE t (id int)"))
+		assert.Empty(t, tx.TrackTx("SELECT 1"))
+	})
+
+	t.Run("START TRANSACTION recognized", func(t *testing.T) {
+		var tx TxState
+		assert.Empty(t, tx.TrackTx("START TRANSACTION"))
+		assert.Empty(t, tx.TrackTx("CREATE TABLE a (id int)"))
+		assert.Contains(t, tx.TrackTx("DROP TABLE b"), "multiple DDL")
 	})
 }
 

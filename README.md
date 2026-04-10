@@ -2,33 +2,29 @@
 
 # deesql
 
-Schema migration and local development tool for [Amazon Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/).
+The missing toolkit for [Amazon Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/) -- schema migrations, compatibility checking, and a local development proxy, all in a single binary.
 
 deesql compares your desired schema (`.sql` files) against a live Aurora DSQL cluster and generates a migration plan. It also ships a local proxy server that lets you develop against a standard PostgreSQL container while enforcing DSQL compatibility at the wire protocol level.
 
-No migration history table, no temp databases -- just declarative schema diffing and a DSQL-aware development workflow.
+No migration history table, no temp databases -- just declarative schema diffing and a DSQL-native development workflow.
 
 ## Why?
 
-Aurora DSQL is a serverless, distributed SQL database that speaks the PostgreSQL wire protocol -- but only a subset of it. Many PostgreSQL features (`CREATE EXTENSION`, `FOREIGN KEY`, triggers, PL/pgSQL, `TRUNCATE`, explicit locking, and more) are silently or loudly unsupported.
+[Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/) is a fantastic choice for building modern applications. It gives you a serverless, virtually unlimited, active-active distributed SQL database with strong consistency -- all at an affordable pay-per-request price point. And because it speaks the PostgreSQL wire protocol, your existing tools, drivers, and ORMs just work.
 
-This creates two problems:
+The one catch: DSQL supports a subset of PostgreSQL. Features like `CREATE EXTENSION`, triggers, PL/pgSQL, and `FOREIGN KEY` constraints aren't available. This is a reasonable tradeoff for the scalability and simplicity DSQL provides, but it means existing migration tools (designed for full PostgreSQL) can generate SQL that DSQL rejects at apply time.
 
-1. **Schema migrations are painful.** Existing migration tools don't understand DSQL's constraints (async-only indexes, 1 DDL per transaction, limited ALTER TABLE). They generate SQL that DSQL rejects at apply time.
-
-2. **Local development is blind.** You develop against a standard PostgreSQL container, ship to DSQL, and discover at deploy time that half your SQL doesn't work.
-
-deesql solves both:
+deesql bridges that gap:
 
 - **`plan` / `apply`** -- Stateless, declarative migrations built specifically for DSQL. Parses your `.sql` files, introspects the live cluster, diffs, and applies -- respecting DSQL's DDL constraints at every step.
 - **`verify`** -- Catches DSQL-incompatible SQL in your schema files before you ever connect to a cluster.
-- **`proxy`** -- A local TCP proxy that sits between your app and PostgreSQL, intercepting and rejecting unsupported SQL with real DSQL error codes. Develop locally, catch compatibility issues immediately.
+- **`proxy`** -- A local TCP proxy that sits between your app and a standard PostgreSQL container, intercepting and rejecting unsupported SQL with real DSQL error codes. Develop locally with full confidence that your SQL will work on DSQL.
 
 ## Comparison
 
 | Feature | deesql | Atlas | Flyway |
 |---------|--------|-------|--------|
-| Aurora DSQL support | First-class | Generic PostgreSQL | Generic PostgreSQL |
+| Aurora DSQL support | First-class | Pro Plan required | Generic PostgreSQL |
 | Migration approach | Declarative (desired-state diffing) | Declarative + versioned | Versioned (sequential migrations) |
 | Migration history table | None (stateless) | Required (`atlas_schema_revisions`) | Required (`flyway_schema_history`) |
 | DSQL compatibility checking | Built-in (`verify` command) | No | No |
@@ -320,9 +316,9 @@ deesql apply --endpoint <endpoint> --schema ./schema --allow-hazards DELETES_DAT
 
 - **Stateless** -- No migration history table. The plan is always computed fresh from the diff between desired and live schemas.
 - **No temp database** -- SQL files are parsed in-process. No need for a secondary PostgreSQL or DSQL cluster.
-- **DSQL-native** -- Built specifically for Aurora DSQL's constraints (async indexes, IAM auth, single-DDL transactions, limited ALTER TABLE).
+- **DSQL-native** -- Built to complement Aurora DSQL's strengths (async indexes, IAM auth, single-DDL transactions) so you can focus on your application, not migration plumbing.
 - **Safe by default** -- Hazardous operations require explicit opt-in via `--allow-hazards`.
-- **Local-first** -- The proxy lets you catch DSQL incompatibilities during development, not at deploy time.
+- **Local-first** -- The proxy brings DSQL's behavior to your local PostgreSQL, so you develop with confidence from day one.
 
 ## License
 

@@ -36,6 +36,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - run: make test-dsql DSQL="${DSQL}" AWS_PROFILE=""
+      - run: make test-dsql DSQL="${DSQL}" AWS_PROFILE=
         env:
           DSQL: ${{ secrets.AWS_DSQL_E2E_CLUSTER_ID }}.dsql.${{ secrets.AWS_REGION }}.on.aws

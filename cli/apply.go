@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"tomodian/dsql-migrate/internal/dsqlconn"
-	"tomodian/dsql-migrate/internal/output"
-	"tomodian/dsql-migrate/internal/planner"
-	"tomodian/dsql-migrate/internal/runner"
+	"tomodian/deesql/internal/dsqlconn"
+	"tomodian/deesql/internal/output"
+	"tomodian/deesql/internal/planner"
+	"tomodian/deesql/internal/runner"
 
 	"github.com/urfave/cli/v3"
 )

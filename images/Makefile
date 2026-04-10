@@ -1,4 +1,4 @@
-IMAGE ?= dsql-migrate
+IMAGE ?= deesql
 TAG   ?= latest
 
 .PHONY: build

@@ -1,8 +1,8 @@
-# dsql-migrate
+# deesql
 
 CLI tool for schema migrations on Amazon Aurora DSQL.
 
-Go module: `tomodian/dsql-migrate`
+Go module: `tomodian/deesql`
 
 ## Commands
 
@@ -183,12 +183,12 @@ The diff engine generates these DDL statements:
 ## Build & Run
 
 ```sh
-go build -o dsql-migrate .
-./dsql-migrate plan --endpoint <endpoint> --schema ./schema
-./dsql-migrate apply --endpoint <endpoint> --schema ./schema
-./dsql-migrate apply --endpoint <endpoint> --schema ./schema --force
-./dsql-migrate verify --schema ./schema
-./dsql-migrate proxy --listen :15432 --upstream localhost:5432
+go build -o deesql .
+./deesql plan --endpoint <endpoint> --schema ./schema
+./deesql apply --endpoint <endpoint> --schema ./schema
+./deesql apply --endpoint <endpoint> --schema ./schema --force
+./deesql verify --schema ./schema
+./deesql proxy --listen :15432 --upstream localhost:5432
 ```
 
 ## Testing

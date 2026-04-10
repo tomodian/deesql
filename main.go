@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"tomodian/dsql-migrate/cli"
+	"tomodian/deesql/cli"
 )
 
 func main() {

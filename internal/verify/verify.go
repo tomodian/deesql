@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"tomodian/dsql-migrate/internal/rules"
-	"tomodian/dsql-migrate/internal/ui"
+	"tomodian/deesql/internal/rules"
+	"tomodian/deesql/internal/ui"
 )
 
 type Violation struct {

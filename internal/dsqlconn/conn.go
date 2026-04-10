@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"time"
 
-	"tomodian/dsql-migrate/internal/ui"
+	"tomodian/deesql/internal/ui"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"

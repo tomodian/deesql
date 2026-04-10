@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"tomodian/dsql-migrate/internal/schema"
-	"tomodian/dsql-migrate/internal/ui"
+	"tomodian/deesql/internal/schema"
+	"tomodian/deesql/internal/ui"
 
 	"github.com/go-playground/validator/v10"
 )

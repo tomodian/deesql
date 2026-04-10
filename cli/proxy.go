@@ -5,7 +5,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"tomodian/dsql-migrate/internal/proxy"
+	"tomodian/deesql/internal/proxy"
 )
 
 func proxyCmd() *cli.Command {

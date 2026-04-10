@@ -1,4 +1,4 @@
-module tomodian/dsql-migrate
+module tomodian/deesql
 
 go 1.26.1
 

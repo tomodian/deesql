@@ -1,4 +1,4 @@
-[![test](https://github.com/tomodian/dsql-migrate/actions/workflows/test.yml/badge.svg)](https://github.com/tomodian/dsql-migrate/actions/workflows/test.yml) [![docker](https://github.com/tomodian/dsql-migrate/actions/workflows/docker.yml/badge.svg)](https://github.com/tomodian/dsql-migrate/actions/workflows/docker.yml)
+[![test](https://github.com/tomodian/deesql/actions/workflows/test.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/test.yml) [![docker](https://github.com/tomodian/deesql/actions/workflows/docker.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/docker.yml)
 
 # deesql
 
@@ -27,7 +27,7 @@ deesql bridges that gap:
 | Aurora DSQL support | First-class | Pro Plan required | Generic PostgreSQL |
 | Migration approach | Declarative (desired-state diffing) | Declarative + versioned | Versioned (sequential migrations) |
 | Migration history table | None (stateless) | Required (`atlas_schema_revisions`) | Required (`flyway_schema_history`) |
-| DSQL compatibility checking | Built-in (`verify` command) | No | No |
+| DSQL compatibility checking | Built-in (`verify` command) | Pro Plan required | No |
 | Local DSQL proxy | Built-in (`proxy` command) | No | No |
 | `CREATE INDEX ASYNC` | Native support | No awareness | No awareness |
 | 1 DDL per transaction | Handled automatically | Manual workaround | Manual workaround |
@@ -41,13 +41,13 @@ deesql bridges that gap:
 ### Go
 
 ```sh
-go install tomodian/dsql-migrate@latest
+go install tomodian/deesql@latest
 ```
 
 ### Docker
 
 ```sh
-docker run --rm ghcr.io/tomodian/dsql-migrate:latest --help
+docker run --rm ghcr.io/tomodian/deesql:latest --help
 ```
 
 To run with AWS credentials:
@@ -57,7 +57,7 @@ docker run --rm \
   -v ~/.aws:/home/nonroot/.aws:ro \
   -e AWS_PROFILE \
   -v $(pwd)/schema:/schema:ro \
-  ghcr.io/tomodian/dsql-migrate:latest \
+  ghcr.io/tomodian/deesql:latest \
   plan --endpoint <cluster>.dsql.<region>.on.aws --schema /schema
 ```
 

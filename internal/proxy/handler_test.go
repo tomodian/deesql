@@ -300,7 +300,7 @@ func TestBypassAuth(t *testing.T) {
 		frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(&backendBuf), io.Discard)
 
 		var clientOut bytes.Buffer
-		err := bypassAuth(frontend, &clientOut, io.Discard, "")
+		err := bypassAuth(context.Background(), bypassAuthInput{Frontend: frontend, ClientConn: &clientOut, BackendConn: io.Discard})
 		require.NoError(t, err)
 
 		// Client should receive: AuthOk, ParameterStatus, ReadyForQuery.
@@ -340,7 +340,7 @@ func TestBypassAuth(t *testing.T) {
 		frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(&backendBuf), io.Discard)
 
 		var clientOut, backendOut bytes.Buffer
-		err := bypassAuth(frontend, &clientOut, &backendOut, "mypassword")
+		err := bypassAuth(context.Background(), bypassAuthInput{Frontend: frontend, ClientConn: &clientOut, BackendConn: &backendOut, Password: "mypassword"})
 		require.NoError(t, err)
 
 		// Backend should have received the bypass password.
@@ -361,7 +361,7 @@ func TestBypassAuth(t *testing.T) {
 		frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(&backendBuf), io.Discard)
 
 		var clientOut bytes.Buffer
-		err := bypassAuth(frontend, &clientOut, io.Discard, "wrongpass")
+		err := bypassAuth(context.Background(), bypassAuthInput{Frontend: frontend, ClientConn: &clientOut, BackendConn: io.Discard, Password: "wrongpass"})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "backend auth failed")
 	})
@@ -401,7 +401,7 @@ func TestHandleConnectionBypass(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, ln.Addr().String(), bypass)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: ln.Addr().String(), Bypass: bypass})
 			close(done)
 		}()
 
@@ -454,7 +454,7 @@ func TestHandleConnectionBypass(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, ln.Addr().String(), bypass)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: ln.Addr().String(), Bypass: bypass})
 			close(done)
 		}()
 
@@ -579,7 +579,7 @@ func TestClientToBackend(t *testing.T) {
 		var clientRespBuf bytes.Buffer
 
 		ctx := context.Background()
-		clientToBackend(ctx, backend, &backendBuf, &clientRespBuf, newLastSQL())
+		clientToBackend(ctx, clientToBackendInput{Backend: backend, BackendConn: &backendBuf, ClientConn: &clientRespBuf, LastSQL: newLastSQL()})
 
 		// The allowed Query + Terminate should have been forwarded to backendBuf.
 		assert.True(t, backendBuf.Len() > 0, "expected data forwarded to backend")
@@ -606,7 +606,7 @@ func TestClientToBackend(t *testing.T) {
 		var clientRespBuf bytes.Buffer
 
 		ctx := context.Background()
-		clientToBackend(ctx, backend, &backendBuf, &clientRespBuf, newLastSQL())
+		clientToBackend(ctx, clientToBackendInput{Backend: backend, BackendConn: &backendBuf, ClientConn: &clientRespBuf, LastSQL: newLastSQL()})
 
 		// Blocked query should NOT be forwarded. Only Terminate is forwarded.
 		// Parse what was sent to the client: should be ErrorResponse + ReadyForQuery.
@@ -653,7 +653,7 @@ func TestClientToBackend(t *testing.T) {
 		var clientRespBuf bytes.Buffer
 
 		ctx := context.Background()
-		clientToBackend(ctx, backend, &backendBuf, &clientRespBuf, newLastSQL())
+		clientToBackend(ctx, clientToBackendInput{Backend: backend, BackendConn: &backendBuf, ClientConn: &clientRespBuf, LastSQL: newLastSQL()})
 
 		// Error sent to client.
 		frontend := pgproto3.NewFrontend(
@@ -681,7 +681,7 @@ func TestClientToBackend(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
-			clientToBackend(ctx, backend, io.Discard, io.Discard, newLastSQL())
+			clientToBackend(ctx, clientToBackendInput{Backend: backend, BackendConn: io.Discard, ClientConn: io.Discard, LastSQL: newLastSQL()})
 			close(done)
 		}()
 
@@ -709,7 +709,7 @@ func TestClientToBackend(t *testing.T) {
 		)
 
 		ctx := context.Background()
-		clientToBackend(ctx, backend, &failWriter{}, io.Discard, newLastSQL())
+		clientToBackend(ctx, clientToBackendInput{Backend: backend, BackendConn: &failWriter{}, ClientConn: io.Discard, LastSQL: newLastSQL()})
 		// Should return without hanging.
 	})
 
@@ -732,7 +732,7 @@ func TestClientToBackend(t *testing.T) {
 		var clientRespBuf bytes.Buffer
 
 		ctx := context.Background()
-		clientToBackend(ctx, backend, &backendBuf, &clientRespBuf, newLastSQL())
+		clientToBackend(ctx, clientToBackendInput{Backend: backend, BackendConn: &backendBuf, ClientConn: &clientRespBuf, LastSQL: newLastSQL()})
 
 		assert.True(t, backendBuf.Len() > 0)
 		assert.Equal(t, 0, clientRespBuf.Len())
@@ -757,7 +757,7 @@ func TestBackendToClient(t *testing.T) {
 
 		var clientBuf bytes.Buffer
 		ctx := context.Background()
-		backendToClient(ctx, frontend, &clientBuf, newLastSQL())
+		backendToClient(ctx, backendToClientInput{Frontend: frontend, ClientConn: &clientBuf, LastSQL: newLastSQL()})
 
 		// Should have written data to client.
 		assert.True(t, clientBuf.Len() > 0)
@@ -775,7 +775,7 @@ func TestBackendToClient(t *testing.T) {
 		)
 
 		ctx := context.Background()
-		backendToClient(ctx, frontend, &failWriter{}, newLastSQL())
+		backendToClient(ctx, backendToClientInput{Frontend: frontend, ClientConn: &failWriter{}, LastSQL: newLastSQL()})
 		// Should return without hanging.
 	})
 
@@ -792,7 +792,7 @@ func TestBackendToClient(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
-			backendToClient(ctx, frontend, io.Discard, newLastSQL())
+			backendToClient(ctx, backendToClientInput{Frontend: frontend, ClientConn: io.Discard, LastSQL: newLastSQL()})
 			close(done)
 		}()
 
@@ -817,7 +817,7 @@ func TestHandleConnection(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, ln.Addr().String(), nil)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: ln.Addr().String()})
 			close(done)
 		}()
 
@@ -879,7 +879,7 @@ func TestHandleConnection(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, ln.Addr().String(), nil)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: ln.Addr().String()})
 			close(done)
 		}()
 
@@ -933,7 +933,7 @@ func TestHandleConnection(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, ln.Addr().String(), nil)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: ln.Addr().String()})
 			close(done)
 		}()
 
@@ -983,7 +983,7 @@ func TestHandleConnection(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, "127.0.0.1:1", nil)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: "127.0.0.1:1"})
 			close(done)
 		}()
 
@@ -1001,7 +1001,7 @@ func TestHandleConnection(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			// Point to an address that will refuse connections.
-			handleConnection(context.Background(), proxyConn, "127.0.0.1:1", nil)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: "127.0.0.1:1"})
 			close(done)
 		}()
 
@@ -1030,7 +1030,7 @@ func TestHandleConnection(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			handleConnection(context.Background(), proxyConn, ln.Addr().String(), nil)
+			handleConnection(context.Background(), handleConnectionInput{ClientConn: proxyConn, UpstreamAddr: ln.Addr().String()})
 			close(done)
 		}()
 

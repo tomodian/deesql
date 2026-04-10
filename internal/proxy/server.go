@@ -68,6 +68,10 @@ func Run(ctx context.Context, in RunInput) error {
 				continue
 			}
 		}
-		go handleConnection(ctx, conn, in.UpstreamAddr, bypass)
+		go handleConnection(ctx, handleConnectionInput{
+			ClientConn:   conn,
+			UpstreamAddr: in.UpstreamAddr,
+			Bypass:       bypass,
+		})
 	}
 }

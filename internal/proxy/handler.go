@@ -38,7 +38,16 @@ type BypassConfig struct {
 	Database string
 }
 
-func handleConnection(ctx context.Context, clientConn net.Conn, upstreamAddr string, bypass *BypassConfig) {
+type handleConnectionInput struct {
+	ClientConn   net.Conn `validate:"required"`
+	UpstreamAddr string   `validate:"required"`
+	Bypass       *BypassConfig
+}
+
+func handleConnection(ctx context.Context, in handleConnectionInput) {
+	clientConn := in.ClientConn
+	upstreamAddr := in.UpstreamAddr
+	bypass := in.Bypass
 	defer clientConn.Close()
 
 	// Read the initial startup message raw bytes.
@@ -94,7 +103,12 @@ func handleConnection(ctx context.Context, clientConn net.Conn, upstreamAddr str
 
 	if bypass != nil {
 		// Bypass mode: accept client unconditionally, handle backend auth with bypass creds.
-		if err := bypassAuth(frontend, clientConn, backendConn, bypass.Password); err != nil {
+		if err := bypassAuth(ctx, bypassAuthInput{
+			Frontend:    frontend,
+			ClientConn:  clientConn,
+			BackendConn: backendConn,
+			Password:    bypass.Password,
+		}); err != nil {
 			ui.Dim("    Bypass auth failed: %v\n", err)
 			return
 		}
@@ -131,12 +145,21 @@ func handleConnection(ctx context.Context, clientConn net.Conn, upstreamAddr str
 	// Backend -> Client relay.
 	go func() {
 		defer closeAll()
-		backendToClient(ctx, frontend, clientConn, &lastSQL)
+		backendToClient(ctx, backendToClientInput{
+			Frontend:   frontend,
+			ClientConn: clientConn,
+			LastSQL:    &lastSQL,
+		})
 	}()
 
 	// Client -> Backend relay (runs on this goroutine).
 	defer closeAll()
-	clientToBackend(ctx, backend, backendConn, clientConn, &lastSQL)
+	clientToBackend(ctx, clientToBackendInput{
+		Backend:     backend,
+		BackendConn: backendConn,
+		ClientConn:  clientConn,
+		LastSQL:     &lastSQL,
+	})
 }
 
 // readStartupMessage reads a raw PostgreSQL startup message (no type byte,
@@ -185,7 +208,18 @@ func relayAuth(frontend *pgproto3.Frontend, clientConn io.Writer) error {
 //   - Sends AuthenticationOk to the client unconditionally (no password check).
 //   - Authenticates with the backend using the bypass password (cleartext, MD5, or SCRAM-SHA-256).
 //   - Forwards ParameterStatus, BackendKeyData, and ReadyForQuery to the client.
-func bypassAuth(frontend *pgproto3.Frontend, clientConn io.Writer, backendConn io.Writer, password string) error {
+type bypassAuthInput struct {
+	Frontend   *pgproto3.Frontend `validate:"required"`
+	ClientConn io.Writer          `validate:"required"`
+	BackendConn io.Writer         `validate:"required"`
+	Password   string
+}
+
+func bypassAuth(ctx context.Context, in bypassAuthInput) error {
+	frontend := in.Frontend
+	clientConn := in.ClientConn
+	backendConn := in.BackendConn
+	password := in.Password
 	// Send AuthenticationOk to the client immediately.
 	authOk := &pgproto3.AuthenticationOk{}
 	buf, err := authOk.Encode(nil)
@@ -215,7 +249,12 @@ func bypassAuth(frontend *pgproto3.Frontend, clientConn io.Writer, backendConn i
 			}
 
 		case *pgproto3.AuthenticationSASL:
-			if err := scramAuth(frontend, backendConn, m.AuthMechanisms, password); err != nil {
+			if err := scramAuth(ctx, scramAuthInput{
+				Frontend:    frontend,
+				BackendConn: backendConn,
+				Mechanisms:  m.AuthMechanisms,
+				Password:    password,
+			}); err != nil {
 				return fmt.Errorf("SCRAM auth failed: %w", err)
 			}
 
@@ -254,7 +293,18 @@ func bypassAuth(frontend *pgproto3.Frontend, clientConn io.Writer, backendConn i
 }
 
 // scramAuth performs SCRAM-SHA-256 authentication with the backend.
-func scramAuth(frontend *pgproto3.Frontend, backendConn io.Writer, mechanisms []string, password string) error {
+type scramAuthInput struct {
+	Frontend    *pgproto3.Frontend `validate:"required"`
+	BackendConn io.Writer          `validate:"required"`
+	Mechanisms  []string           `validate:"required"`
+	Password    string
+}
+
+func scramAuth(ctx context.Context, in scramAuthInput) error {
+	frontend := in.Frontend
+	backendConn := in.BackendConn
+	mechanisms := in.Mechanisms
+	password := in.Password
 	hasSHA256 := false
 	for _, m := range mechanisms {
 		if m == "SCRAM-SHA-256" {
@@ -401,7 +451,18 @@ func buildStartupBytes(user, database string) []byte {
 
 // clientToBackend reads messages from the client, inspects Query/Parse, and
 // either blocks or forwards them to the backend.
-func clientToBackend(ctx context.Context, backend *pgproto3.Backend, backendConn io.Writer, clientConn io.Writer, lastSQL *atomic.Value) {
+type clientToBackendInput struct {
+	Backend    *pgproto3.Backend `validate:"required"`
+	BackendConn io.Writer        `validate:"required"`
+	ClientConn io.Writer         `validate:"required"`
+	LastSQL    *atomic.Value     `validate:"required"`
+}
+
+func clientToBackend(ctx context.Context, in clientToBackendInput) {
+	backend := in.Backend
+	backendConn := in.BackendConn
+	clientConn := in.ClientConn
+	lastSQL := in.LastSQL
 	var tx TxState
 
 	for {
@@ -472,7 +533,16 @@ func clientToBackend(ctx context.Context, backend *pgproto3.Backend, backendConn
 }
 
 // backendToClient reads messages from the backend and forwards them to the client.
-func backendToClient(ctx context.Context, frontend *pgproto3.Frontend, clientConn io.Writer, lastSQL *atomic.Value) {
+type backendToClientInput struct {
+	Frontend   *pgproto3.Frontend `validate:"required"`
+	ClientConn io.Writer          `validate:"required"`
+	LastSQL    *atomic.Value      `validate:"required"`
+}
+
+func backendToClient(ctx context.Context, in backendToClientInput) {
+	frontend := in.Frontend
+	clientConn := in.ClientConn
+	lastSQL := in.LastSQL
 	for {
 		select {
 		case <-ctx.Done():

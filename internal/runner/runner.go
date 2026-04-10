@@ -65,7 +65,14 @@ func Execute(ctx context.Context, in ExecuteInput) error {
 	for i, stmt := range in.Plan.Statements {
 		ui.Step("(%d/%d) %s", i+1, total, stmt.DDL)
 
-		if err := executeWithRetry(ctx, in.DB, stmt, i+1, in.MaxRetries, in.RetryBaseDelay); err != nil {
+		if err := executeWithRetry(ctx, executeWithRetryInput{
+			DB:         in.DB,
+			SQL:        stmt.ToSQL(),
+			DDL:        stmt.DDL,
+			Num:        i + 1,
+			MaxRetries: in.MaxRetries,
+			BaseDelay:  in.RetryBaseDelay,
+		}); err != nil {
 			return err
 		}
 		ui.Success("Statement %d completed", i+1)
@@ -73,18 +80,27 @@ func Execute(ctx context.Context, in ExecuteInput) error {
 	return nil
 }
 
-func executeWithRetry(ctx context.Context, db *sql.DB, stmt schema.Statement, num int, maxRetries int, baseDelay time.Duration) error {
-	delay := baseDelay
+type executeWithRetryInput struct {
+	DB         *sql.DB       `validate:"required"`
+	SQL        string        `validate:"required"`
+	DDL        string
+	Num        int
+	MaxRetries int
+	BaseDelay  time.Duration
+}
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		_, err := db.ExecContext(ctx, stmt.ToSQL())
+func executeWithRetry(ctx context.Context, in executeWithRetryInput) error {
+	delay := in.BaseDelay
+
+	for attempt := 0; attempt <= in.MaxRetries; attempt++ {
+		_, err := in.DB.ExecContext(ctx, in.SQL)
 		if err == nil {
 			return nil
 		}
 
 		// Retry on OCC conflict (SQLSTATE 40001).
-		if isOCCError(err) && attempt < maxRetries {
-			ui.Warn("Statement %d: OCC conflict, retrying in %s (%d/%d)...", num, delay, attempt+1, maxRetries)
+		if isOCCError(err) && attempt < in.MaxRetries {
+			ui.Warn("Statement %d: OCC conflict, retrying in %s (%d/%d)...", in.Num, delay, attempt+1, in.MaxRetries)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -94,8 +110,8 @@ func executeWithRetry(ctx context.Context, db *sql.DB, stmt schema.Statement, nu
 			continue
 		}
 
-		ui.Error("Statement %d failed: %s", num, err)
-		return fmt.Errorf("statement %d failed (%s): %w", num, stmt.DDL, err)
+		ui.Error("Statement %d failed: %s", in.Num, err)
+		return fmt.Errorf("statement %d failed (%s): %w", in.Num, in.DDL, err)
 	}
 	return nil
 }

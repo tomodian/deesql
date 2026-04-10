@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"database/sql"
+
 	"tomodian/deesql/internal/dsqlconn"
 	"tomodian/deesql/internal/ui"
 
@@ -58,7 +60,13 @@ func sqlCmd() *cli.Command {
 
 			for i, stmt := range stmts {
 				ui.Dim("  (%d/%d) %s\n", i+1, len(stmts), truncateStmt(stmt))
-				if err := execWithRetry(ctx, out, stmt, i+1, maxRetries, retryDelay); err != nil {
+				if err := execWithRetry(ctx, execWithRetryInput{
+					DB:         out.DB,
+					SQL:        stmt,
+					Num:        i + 1,
+					MaxRetries: maxRetries,
+					BaseDelay:  retryDelay,
+				}); err != nil {
 					return err
 				}
 			}
@@ -89,17 +97,25 @@ func splitSQL(sql string) []string {
 	return stmts
 }
 
-func execWithRetry(ctx context.Context, out *dsqlconn.ConnectOutput, stmt string, num int, maxRetries int, baseDelay time.Duration) error {
-	delay := baseDelay
+type execWithRetryInput struct {
+	DB         *sql.DB       `validate:"required"`
+	SQL        string        `validate:"required"`
+	Num        int
+	MaxRetries int
+	BaseDelay  time.Duration
+}
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		_, err := out.DB.ExecContext(ctx, stmt)
+func execWithRetry(ctx context.Context, in execWithRetryInput) error {
+	delay := in.BaseDelay
+
+	for attempt := 0; attempt <= in.MaxRetries; attempt++ {
+		_, err := in.DB.ExecContext(ctx, in.SQL)
 		if err == nil {
 			return nil
 		}
 
-		if strings.Contains(err.Error(), "40001") && attempt < maxRetries {
-			ui.Warn("Statement %d: OCC conflict, retrying in %s (%d/%d)...", num, delay, attempt+1, maxRetries)
+		if strings.Contains(err.Error(), "40001") && attempt < in.MaxRetries {
+			ui.Warn("Statement %d: OCC conflict, retrying in %s (%d/%d)...", in.Num, delay, attempt+1, in.MaxRetries)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -109,8 +125,8 @@ func execWithRetry(ctx context.Context, out *dsqlconn.ConnectOutput, stmt string
 			continue
 		}
 
-		ui.Error("Statement %d failed: %v", num, err)
-		return fmt.Errorf("statement %d failed: %w", num, err)
+		ui.Error("Statement %d failed: %v", in.Num, err)
+		return fmt.Errorf("statement %d failed: %w", in.Num, err)
 	}
 	return nil
 }

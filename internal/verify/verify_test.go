@@ -160,7 +160,7 @@ CREATE INDEX ASYNC idx_users_name ON users (name);
 		violations, err := Files([]string{dir})
 		require.NoError(t, err)
 		assert.NotEmpty(t, violations)
-		assert.Contains(t, violations[0].Rule, "non-SQL language")
+		assert.Contains(t, violations[0].Rule, "language plpgsql")
 	})
 
 	t.Run("comments are skipped", func(t *testing.T) {

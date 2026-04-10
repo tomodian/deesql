@@ -9,6 +9,7 @@ Go module: `tomodian/dsql-migrate`
 - `plan` — Connect to DSQL, diff live schema against desired-state `.sql` files, print migration plan.
 - `apply` — Same as plan, then execute the migration statements.
 - `verify` — Check `.sql` files for DSQL compatibility without connecting to a database.
+- `proxy` — Start a DSQL-filtering TCP proxy between a PostgreSQL client and backend that intercepts and blocks unsupported SQL statements.
 
 ## Architecture
 
@@ -21,6 +22,7 @@ migrate/
     plan.go                     # "plan" subcommand
     apply.go                    # "apply" subcommand
     verify.go                   # "verify" subcommand
+    proxy.go                    # "proxy" subcommand
     helpers.go                  # Flag extraction, schema resolution, verification
   internal/
     dsqlconn/
@@ -36,7 +38,12 @@ migrate/
       generate.go               # DDL generation helpers
       plan.go                   # Plan, Statement, Action, Hazard types
     output/format.go            # Plan output formatting (Terraform-style summary)
-    verify/verify.go            # Regex-based DSQL compatibility checker
+    rules/rules.go              # Shared DSQL compatibility Rule type and SharedRules
+    verify/verify.go            # Regex-based DSQL compatibility checker (static .sql files)
+    proxy/
+      server.go                 # TCP listener and graceful shutdown
+      handler.go                # Per-connection PG protocol relay (startup, auth, steady-state)
+      intercept.go              # SQL interception: Check(), splitStatements(), proxy-specific rules
     ui/ui.go                    # Colored terminal output helpers
   tests/
     simple/                     # Example desired-state schema files
@@ -50,6 +57,7 @@ migrate/
 - `github.com/go-playground/validator/v10` — struct validation
 - `github.com/fatih/color` — colored terminal output
 - `github.com/aws/aws-sdk-go-v2`, `config`, `credentials`, `feature/dsql/auth`, `service/sts` — IAM auth and role assumption
+- `github.com/jackc/pgproto3/v2` — PostgreSQL wire protocol (frontend/backend message parsing for proxy)
 - `github.com/DATA-DOG/go-sqlmock` — SQL mock for testing
 - `github.com/stretchr/testify` — test assertions
 
@@ -118,6 +126,13 @@ The diff engine generates these DDL statements:
 | `--allow-hazards` | Hazard types to permit (e.g. `INDEX_BUILD,DELETES_DATA`) | (none) |
 | `--force` | Apply without confirmation prompt | `false` |
 
+### `proxy` subcommand flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--listen` | Address to listen on | `:15432` |
+| `--upstream` | Backend PostgreSQL address | `localhost:5432` |
+
 ## Migration Design
 
 - **Stateless**: No migration history table. Plans are idempotent — always diffs current live schema vs desired `.sql` files.
@@ -154,6 +169,17 @@ The diff engine generates these DDL statements:
 - Check expressions normalized: `= ANY (ARRAY[...])` → `IN (...)`.
 - Introspection queries `pg_class`, `pg_attribute`, `pg_constraint`, and `pg_index` in the `public` schema.
 
+## Proxy Design
+
+- **TCP-level proxy**: Sits between a PostgreSQL client and backend, speaking the PG wire protocol via `pgproto3/v2`.
+- **SQL interception**: Inspects `Query` (simple protocol) and `Parse` (extended protocol) messages; blocks statements matching DSQL-unsupported patterns.
+- **Shared rules**: DSQL compatibility rules are defined in `internal/rules/rules.go` and shared between `verify` and `proxy`. Each consumer adds context-specific rules on top.
+- **Proxy-specific rules**: Additional checks for `CREATE TABLE AS`, `CREATE TYPE ENUM/RANGE`, `ALTER SYSTEM`, `VACUUM`, `COLLATE`, and index ordering (`ASC`/`DESC`).
+- **Error handling**: Blocked statements return a PostgreSQL `ErrorResponse` (SQLSTATE `0A000`) followed by `ReadyForQuery`, keeping the client connection alive.
+- **SSL handling**: Responds `N` to `SSLRequest` and proceeds with plaintext (proxy is for local development use).
+- **CancelRequest**: Forwarded directly to the backend.
+- **Statement splitting**: Multi-statement strings (separated by `;`) are split and each checked independently, respecting single-quoted string literals.
+
 ## Build & Run
 
 ```sh
@@ -162,6 +188,13 @@ go build -o dsql-migrate .
 ./dsql-migrate apply --endpoint <endpoint> --schema ./schema
 ./dsql-migrate apply --endpoint <endpoint> --schema ./schema --force
 ./dsql-migrate verify --schema ./schema
+./dsql-migrate proxy --listen :15432 --upstream localhost:5432
+```
+
+## Testing
+
+```sh
+make test          # Run all tests with race detection and coverage
 ```
 
 ## Go Code Styles

@@ -43,6 +43,7 @@ func App() *cli.Command {
 			planCmd(),
 			applyCmd(),
 			verifyCmd(),
+			proxyCmd(),
 		},
 	}
 }

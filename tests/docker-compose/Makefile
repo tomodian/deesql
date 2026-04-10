@@ -68,7 +68,7 @@ endif
 		--region $(DSQL_REGION) \
 		--user $(DSQL_USER) \
 		--schema /schema \
-		--allow-hazards INDEX_BUILD \
+		--allow-hazards INDEX_BUILD --allow-hazards INDEX_DROPPED \
 		--force && \
 	echo "" && \
 	echo "=== Verifying no drift ===" && \

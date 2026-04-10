@@ -1,0 +1,1 @@
+-- Empty schema: applying this against a live cluster drops all tables.

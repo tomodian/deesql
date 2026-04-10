@@ -15,15 +15,10 @@ DSQL_USER    ?= admin
 DSQL_DB      ?= postgres
 DSQL_REGION  ?= $(shell echo $(DSQL) | sed -n 's/.*\.dsql\.\(.*\)\.on\.aws/\1/p')
 
-PGPASS_FILE = $(CURDIR)/.pgpass
-DSQL_PSQL = docker run --rm -i \
-	-v $(CURDIR)/schema:/schema:ro \
-	-v $(CURDIR)/test_queries.sql:/test_queries.sql:ro \
-	-v $(CURDIR)/cleanup.sql:/cleanup.sql:ro \
-	-v $(PGPASS_FILE):/home/.pgpass:ro \
-	-e PGPASSFILE=/home/.pgpass \
-	postgres:17-alpine \
-	psql "host=$(DSQL) port=5432 user=$(DSQL_USER) dbname=$(DSQL_DB) sslmode=require"
+# AWS credentials passed to deesql container (works with both local profiles and GHA OIDC).
+DEESQL_AWS = \
+	-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+	-e AWS_REGION=$(DSQL_REGION)
 
 # --- Local proxy test ---
 
@@ -50,47 +45,61 @@ test-docker: build clean
 	@docker compose down -v 2>/dev/null
 
 # --- Real Aurora DSQL test ---
+# Uses only the deesql CLI — no psql dependency.
+# 1. verify: check schema files for DSQL compatibility
+# 2. apply: deploy schema to real DSQL cluster
+# 3. plan: verify schema matches (idempotent — no changes expected)
+# 4. apply --schema empty: drop all tables to clean up
 
 test-dsql: build
 ifndef DSQL
 	$(error DSQL is required. Usage: make test-dsql DSQL=your-cluster.dsql.us-east-1.on.aws)
 endif
-	@aws dsql generate-db-connect-admin-auth-token \
-		--hostname $(DSQL) --region $(DSQL_REGION) \
-		$(if $(AWS_PROFILE),--profile $(AWS_PROFILE),) \
-		| xargs -I{} sh -c 'printf "%s:%s:%s:%s:%s\n" "$(DSQL)" "5432" "$(DSQL_DB)" "$(DSQL_USER)" "$$1"' _ {} > $(PGPASS_FILE)
-	@chmod 600 $(PGPASS_FILE)
-	@echo "Connecting to $(DSQL) (region: $(DSQL_REGION), user: $(DSQL_USER))"
-	@echo ""
-	@echo "=== Verifying schema ==="
-	@docker run --rm \
-		-v $(CURDIR)/schema:/schema:ro \
-		$(IMAGE) verify --schema /schema
-	@echo ""
-	@echo "=== Applying schema ==="
-	@eval $$(aws configure export-credentials --format env $(if $(AWS_PROFILE),--profile $(AWS_PROFILE),) 2>/dev/null) && \
+	@eval $$(aws configure export-credentials --format env $(if $(AWS_PROFILE),--profile $(AWS_PROFILE),) 2>/dev/null) || true; \
+	echo "Connecting to $(DSQL) (region: $(DSQL_REGION), user: $(DSQL_USER))"; \
+	echo ""; \
+	echo "=== Verifying schema ==="; \
 	docker run --rm \
 		-v $(CURDIR)/schema:/schema:ro \
-		-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
-		-e AWS_REGION=$(DSQL_REGION) \
+		$(IMAGE) verify --schema /schema && \
+	echo "" && \
+	echo "=== Applying schema ===" && \
+	docker run --rm \
+		-v $(CURDIR)/schema:/schema:ro \
+		$(DEESQL_AWS) \
 		$(IMAGE) apply \
 			--endpoint $(DSQL) \
 			--region $(DSQL_REGION) \
 			--user $(DSQL_USER) \
 			--schema /schema \
 			--allow-hazards INDEX_BUILD \
-			--force
-	@echo ""
-	@echo "=== Running test queries ==="
-	@$(DSQL_PSQL) -f /test_queries.sql 2>&1 || exit 1
-	@echo ""
-	@echo "=== Cleaning up DSQL ==="
-	@$(DSQL_PSQL) -f /cleanup.sql 2>&1
-	@echo ""
-	@echo "All tests passed on Aurora DSQL."
+			--force && \
+	echo "" && \
+	echo "=== Verifying schema is applied (plan should show no changes) ===" && \
+	docker run --rm \
+		-v $(CURDIR)/schema:/schema:ro \
+		$(DEESQL_AWS) \
+		$(IMAGE) plan \
+			--endpoint $(DSQL) \
+			--region $(DSQL_REGION) \
+			--user $(DSQL_USER) \
+			--schema /schema && \
+	echo "" && \
+	echo "=== Cleaning up DSQL ===" && \
+	docker run --rm \
+		-v $(CURDIR)/cleanup_schema:/schema:ro \
+		$(DEESQL_AWS) \
+		$(IMAGE) apply \
+			--endpoint $(DSQL) \
+			--region $(DSQL_REGION) \
+			--user $(DSQL_USER) \
+			--schema /schema \
+			--allow-hazards DELETES_DATA \
+			--force && \
+	echo "" && \
+	echo "All tests passed on Aurora DSQL."
 
 test: test-docker test-dsql
 
 clean:
 	@docker compose down -v 2>/dev/null 2>/dev/null || true
-	@rm -f $(PGPASS_FILE)

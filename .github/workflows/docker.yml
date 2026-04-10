@@ -2,10 +2,8 @@ name: docker
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - "*.*.*"
+      - "[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
   build-and-push:
@@ -31,7 +29,6 @@ jobs:
         with:
           images: ghcr.io/tomodian/deesql
           tags: |
-            type=ref,event=branch
             type=match,pattern=(\d+\.\d+\.\d+),group=1
             type=match,pattern=(\d+\.\d+)\.\d+,group=1
 

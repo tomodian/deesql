@@ -84,12 +84,19 @@ func normalizeDefault(d string) string {
 	return s
 }
 
-var trivialCastRe = regexp.MustCompile(`::(?:text|integer|bigint|smallint|boolean|real|double precision|numeric|timestamptz|timestamp|date|time|timetz|uuid|bytea|varchar|char)\b`)
+// Strip type casts. Matches ::type including multi-word types like "character varying",
+// "double precision", "timestamp with time zone", types with precision like "numeric(10,2)",
+// and array casts like "::text[]".
+var trivialCastRe = regexp.MustCompile(`::(?:character varying|double precision|timestamp with(?:out)? time zone|time with(?:out)? time zone|text|integer|bigint|smallint|boolean|real|numeric|timestamptz|timestamp|date|timetz|time|uuid|bytea|varchar|char)(?:\(\d+(?:,\s*\d+)?\))?(?:\[\])?`)
 
 // normalizeCheck normalizes a CHECK constraint expression for comparison.
 // PostgreSQL rewrites IN (...) to = ANY (ARRAY[...]) and adds type casts.
 // We normalize both forms to a comparable string.
-var anyArrayRe = regexp.MustCompile(`(?i)=\s*ANY\s*\(ARRAY\[([^\]]+)\]\)`)
+var (
+	anyArrayRe = regexp.MustCompile(`(?i)=\s*ANY\s*\(+ARRAY\[([^\]]+)\]\)+`)
+	// Matches: <col> BETWEEN <lo> AND <hi>
+	betweenRe = regexp.MustCompile(`(?i)(\w+)\s+between\s+(\S+)\s+and\s+(\S+)`)
+)
 
 func normalizeCheck(expr string) string {
 	s := strings.TrimSpace(strings.ToLower(expr))
@@ -106,29 +113,16 @@ func normalizeCheck(expr string) string {
 		return "in (" + m[1] + ")"
 	})
 
-	// Strip redundant outer parens: ((expr)) → (expr)
-	for len(s) > 2 && s[0] == '(' && s[len(s)-1] == ')' {
-		// Check if the outer parens are redundant (match each other).
-		inner := s[1 : len(s)-1]
-		depth := 0
-		balanced := true
-		for _, ch := range inner {
-			if ch == '(' {
-				depth++
-			} else if ch == ')' {
-				depth--
-			}
-			if depth < 0 {
-				balanced = false
-				break
-			}
-		}
-		if balanced && depth == 0 {
-			s = inner
-		} else {
-			break
-		}
-	}
+	// Expand BETWEEN x AND y to >= x and <= y (DSQL stores the expanded form).
+	s = betweenRe.ReplaceAllString(s, "$1 >= $2 and $1 <= $3")
+
+	// Strip ALL parentheses and brackets for comparison. DSQL and PostgreSQL
+	// add varying amounts of parens around sub-expressions, and ARRAY[...]
+	// may leave brackets after conversion.
+	s = strings.ReplaceAll(s, "(", "")
+	s = strings.ReplaceAll(s, ")", "")
+	s = strings.ReplaceAll(s, "[", "")
+	s = strings.ReplaceAll(s, "]", "")
 
 	// Normalize whitespace.
 	s = strings.Join(strings.Fields(s), " ")

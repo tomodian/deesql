@@ -165,28 +165,27 @@ func diffTable(current, desired Table) ([]Statement, error) {
 	}
 
 	// --- Unique Constraints ---
+	// Aurora DSQL does not support ALTER TABLE ADD/DROP CONSTRAINT.
+	// Constraints can only be defined at CREATE TABLE time.
+	// Constraint drift is blocked at plan time.
 	currentUCs := constraintMap(current.UniqueConstraints)
 	desiredUCs := constraintMap(desired.UniqueConstraints)
 
 	for _, cuc := range current.UniqueConstraints {
 		key := constraintKey(cuc.Columns)
 		if _, exists := desiredUCs[key]; !exists {
-			stmts = append(stmts, Statement{
-				DDL:      generateDropConstraint(current.Name, cuc.Name),
-				Action:   ActionDestroy,
-				Resource: "constraint." + current.Name + "." + cuc.Name,
-			})
+			return nil, fmt.Errorf(
+				"DROP CONSTRAINT not supported by Aurora DSQL: cannot drop unique constraint %s.%s (recreate the table instead)",
+				current.Name, cuc.Name)
 		}
 	}
 
 	for _, duc := range desired.UniqueConstraints {
 		key := constraintKey(duc.Columns)
 		if _, exists := currentUCs[key]; !exists {
-			stmts = append(stmts, Statement{
-				DDL:      generateAddUniqueConstraint(desired.Name, duc),
-				Action:   ActionCreate,
-				Resource: "constraint." + desired.Name + "." + duc.Name,
-			})
+			return nil, fmt.Errorf(
+				"ADD CONSTRAINT not supported by Aurora DSQL: cannot add unique constraint %s.%s (recreate the table instead)",
+				desired.Name, duc.Name)
 		}
 	}
 
@@ -196,21 +195,17 @@ func diffTable(current, desired Table) ([]Statement, error) {
 
 	for _, ccc := range current.CheckConstraints {
 		if _, exists := desiredCCs[normalizeCheck(ccc.Expression)]; !exists {
-			stmts = append(stmts, Statement{
-				DDL:      generateDropConstraint(current.Name, ccc.Name),
-				Action:   ActionDestroy,
-				Resource: "constraint." + current.Name + "." + ccc.Name,
-			})
+			return nil, fmt.Errorf(
+				"DROP CONSTRAINT not supported by Aurora DSQL: cannot drop check constraint %s.%s (recreate the table instead)",
+				current.Name, ccc.Name)
 		}
 	}
 
 	for _, dcc := range desired.CheckConstraints {
 		if _, exists := currentCCs[normalizeCheck(dcc.Expression)]; !exists {
-			stmts = append(stmts, Statement{
-				DDL:      generateAddCheckConstraint(desired.Name, dcc),
-				Action:   ActionCreate,
-				Resource: "constraint." + desired.Name + "." + dcc.Name,
-			})
+			return nil, fmt.Errorf(
+				"ADD CONSTRAINT not supported by Aurora DSQL: cannot add check constraint %s.%s (recreate the table instead)",
+				desired.Name, dcc.Name)
 		}
 	}
 
@@ -322,7 +317,7 @@ func constraintKey(cols []string) string {
 }
 
 func indexKey(idx Index) string {
-	return fmt.Sprintf("%v:%v", idx.Columns, idx.IsUnique)
+	return fmt.Sprintf("%v:%v:%v", idx.Columns, idx.IncludeColumns, idx.IsUnique)
 }
 
 type stmtCategory int

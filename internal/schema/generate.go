@@ -66,8 +66,12 @@ func generateCreateIndex(table string, idx Index) string {
 	if idx.IsUnique {
 		unique = "UNIQUE "
 	}
-	return fmt.Sprintf("CREATE %sINDEX ASYNC %s ON %s (%s)",
+	sql := fmt.Sprintf("CREATE %sINDEX ASYNC %s ON %s (%s)",
 		unique, idx.Name, table, strings.Join(idx.Columns, ", "))
+	if len(idx.IncludeColumns) > 0 {
+		sql += fmt.Sprintf(" INCLUDE (%s)", strings.Join(idx.IncludeColumns, ", "))
+	}
+	return sql
 }
 
 func generateDropIndex(name string) string {

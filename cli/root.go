@@ -44,6 +44,7 @@ func App() *cli.Command {
 			applyCmd(),
 			verifyCmd(),
 			proxyCmd(),
+			sqlCmd(),
 		},
 	}
 }

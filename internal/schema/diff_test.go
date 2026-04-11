@@ -148,7 +148,7 @@ func TestDiff(t *testing.T) {
 		assert.Contains(t, err.Error(), "PRIMARY KEY change not supported")
 	})
 
-	t.Run("add unique constraint", func(t *testing.T) {
+	t.Run("add unique constraint returns error", func(t *testing.T) {
 		current := Schema{Tables: []Table{{
 			Name:       "users",
 			Columns:    []Column{{Name: "id", Type: "text"}, {Name: "email", Type: "text"}},
@@ -163,13 +163,12 @@ func TestDiff(t *testing.T) {
 			},
 		}}}
 
-		out, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
-		require.NoError(t, err)
-		require.Len(t, out.Plan.Statements, 1)
-		assert.Contains(t, out.Plan.Statements[0].DDL, "ADD CONSTRAINT users_email_key UNIQUE")
+		_, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ADD CONSTRAINT not supported")
 	})
 
-	t.Run("drop unique constraint", func(t *testing.T) {
+	t.Run("drop unique constraint returns error", func(t *testing.T) {
 		current := Schema{Tables: []Table{{
 			Name:       "users",
 			Columns:    []Column{{Name: "id", Type: "text"}, {Name: "email", Type: "text"}},
@@ -184,10 +183,9 @@ func TestDiff(t *testing.T) {
 			PrimaryKey: &PrimaryKey{Name: "users_pkey", Columns: []string{"id"}},
 		}}}
 
-		out, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
-		require.NoError(t, err)
-		require.Len(t, out.Plan.Statements, 1)
-		assert.Contains(t, out.Plan.Statements[0].DDL, "DROP CONSTRAINT users_email_key")
+		_, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "DROP CONSTRAINT not supported")
 	})
 
 	t.Run("add and drop index", func(t *testing.T) {
@@ -332,7 +330,7 @@ func TestDiff(t *testing.T) {
 		assert.Contains(t, err.Error(), "PRIMARY KEY change not supported")
 	})
 
-	t.Run("add check constraint", func(t *testing.T) {
+	t.Run("add check constraint returns error", func(t *testing.T) {
 		current := Schema{Tables: []Table{{
 			Name:       "t",
 			Columns:    []Column{{Name: "id", Type: "text"}, {Name: "val", Type: "integer"}},
@@ -347,13 +345,12 @@ func TestDiff(t *testing.T) {
 			},
 		}}}
 
-		out, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
-		require.NoError(t, err)
-		require.Len(t, out.Plan.Statements, 1)
-		assert.Contains(t, out.Plan.Statements[0].DDL, "ADD CONSTRAINT t_val_check CHECK")
+		_, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ADD CONSTRAINT not supported")
 	})
 
-	t.Run("drop check constraint", func(t *testing.T) {
+	t.Run("drop check constraint returns error", func(t *testing.T) {
 		current := Schema{Tables: []Table{{
 			Name:       "t",
 			Columns:    []Column{{Name: "id", Type: "text"}, {Name: "val", Type: "integer"}},
@@ -368,10 +365,9 @@ func TestDiff(t *testing.T) {
 			PrimaryKey: &PrimaryKey{Name: "t_pkey", Columns: []string{"id"}},
 		}}}
 
-		out, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
-		require.NoError(t, err)
-		require.Len(t, out.Plan.Statements, 1)
-		assert.Contains(t, out.Plan.Statements[0].DDL, "DROP CONSTRAINT t_val_check")
+		_, err := Diff(context.Background(), DiffInput{Current: current, Desired: desired})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "DROP CONSTRAINT not supported")
 	})
 
 	t.Run("alter default returns error", func(t *testing.T) {

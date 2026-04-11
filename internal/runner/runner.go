@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"tomodian/deesql/internal/schema"
 	"tomodian/deesql/internal/ui"
 
 	"github.com/go-playground/validator/v10"
 )
+
 
 var validate = validator.New()
 
@@ -22,8 +24,10 @@ type CheckHazardsInput struct {
 
 // ExecuteInput is the input for Execute.
 type ExecuteInput struct {
-	DB   *sql.DB     `validate:"required"`
-	Plan schema.Plan
+	DB             *sql.DB       `validate:"required"`
+	Plan           schema.Plan
+	MaxRetries     int
+	RetryBaseDelay time.Duration
 }
 
 // CheckHazards validates the plan against allowed hazard types.
@@ -49,6 +53,9 @@ func CheckHazards(ctx context.Context, in CheckHazardsInput) error {
 }
 
 // Execute applies the migration plan to the database.
+// Statements that fail with OCC conflicts (SQLSTATE 40001) are retried
+// with exponential backoff, since DSQL uses optimistic concurrency control
+// and concurrent DDL (e.g., async index builds) can cause transient conflicts.
 func Execute(ctx context.Context, in ExecuteInput) error {
 	if err := validate.Struct(in); err != nil {
 		return fmt.Errorf("invalid execute input: %w", err)
@@ -58,11 +65,58 @@ func Execute(ctx context.Context, in ExecuteInput) error {
 	for i, stmt := range in.Plan.Statements {
 		ui.Step("(%d/%d) %s", i+1, total, stmt.DDL)
 
-		if _, err := in.DB.ExecContext(ctx, stmt.ToSQL()); err != nil {
-			ui.Error("Statement %d failed: %s", i+1, err)
-			return fmt.Errorf("statement %d failed (%s): %w", i+1, stmt.DDL, err)
+		if err := executeWithRetry(ctx, executeWithRetryInput{
+			DB:         in.DB,
+			SQL:        stmt.ToSQL(),
+			DDL:        stmt.DDL,
+			Num:        i + 1,
+			MaxRetries: in.MaxRetries,
+			BaseDelay:  in.RetryBaseDelay,
+		}); err != nil {
+			return err
 		}
 		ui.Success("Statement %d completed", i+1)
 	}
 	return nil
+}
+
+type executeWithRetryInput struct {
+	DB         *sql.DB       `validate:"required"`
+	SQL        string        `validate:"required"`
+	DDL        string
+	Num        int
+	MaxRetries int
+	BaseDelay  time.Duration
+}
+
+func executeWithRetry(ctx context.Context, in executeWithRetryInput) error {
+	delay := in.BaseDelay
+
+	for attempt := 0; attempt <= in.MaxRetries; attempt++ {
+		_, err := in.DB.ExecContext(ctx, in.SQL)
+		if err == nil {
+			return nil
+		}
+
+		// Retry on OCC conflict (SQLSTATE 40001).
+		if isOCCError(err) && attempt < in.MaxRetries {
+			ui.Warn("Statement %d: OCC conflict, retrying in %s (%d/%d)...", in.Num, delay, attempt+1, in.MaxRetries)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+			delay *= 2
+			continue
+		}
+
+		ui.Error("Statement %d failed: %s", in.Num, err)
+		return fmt.Errorf("statement %d failed (%s): %w", in.Num, in.DDL, err)
+	}
+	return nil
+}
+
+// isOCCError checks if the error is a DSQL optimistic concurrency conflict (SQLSTATE 40001).
+func isOCCError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "40001")
 }

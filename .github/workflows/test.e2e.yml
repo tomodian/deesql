@@ -1,0 +1,41 @@
+name: test.e2e
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-docker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/docker-compose
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - run: make test-docker
+
+  test-dsql:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/docker-compose
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - run: make test-dsql DSQL="${DSQL}" AWS_PROFILE=
+        env:
+          DSQL: ${{ secrets.AWS_DSQL_E2E_CLUSTER_ID }}.dsql.${{ secrets.AWS_REGION }}.on.aws

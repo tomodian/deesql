@@ -29,6 +29,16 @@ func applyCmd() *cli.Command {
 				Usage: "Apply without confirmation prompt",
 				Value: false,
 			},
+			&cli.IntFlag{
+				Name:  FlagRetries,
+				Usage: "Max retries on OCC conflict (SQLSTATE 40001)",
+				Value: DefaultRetries,
+			},
+			&cli.DurationFlag{
+				Name:  FlagRetryDelay,
+				Usage: "Initial delay between retries (doubles each attempt)",
+				Value: DefaultRetryDelay,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if err := requireFlags(cmd); err != nil {
@@ -84,8 +94,10 @@ func applyCmd() *cli.Command {
 			}
 
 			if err := runner.Execute(ctx, runner.ExecuteInput{
-				DB:   out.DB,
-				Plan: planOut.Plan,
+				DB:             out.DB,
+				Plan:           planOut.Plan,
+				MaxRetries:     int(cmd.Int(FlagRetries)),
+				RetryBaseDelay: cmd.Duration(FlagRetryDelay),
 			}); err != nil {
 				return fmt.Errorf("applying migration: %w", err)
 			}

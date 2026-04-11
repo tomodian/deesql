@@ -42,7 +42,7 @@ var SharedRules = []Rule{
 	// Unsupported table options
 	{Name: "CREATE TEMPORARY TABLE is unsupported", Pattern: regexp.MustCompile(`(?i)\bCREATE\s+(GLOBAL\s+|LOCAL\s+)?TEMP(ORARY)?\s+TABLE\b`)},
 	{Name: "CREATE TABLE INHERITS is unsupported", Pattern: regexp.MustCompile(`(?i)\bINHERITS\s*\(`)},
-	{Name: "CREATE TABLE PARTITION is unsupported", Pattern: regexp.MustCompile(`(?i)\bPARTITION\s+BY\b`)},
+	{Name: "CREATE TABLE PARTITION is unsupported", Pattern: regexp.MustCompile(`(?i)\)\s*PARTITION\s+BY\b`)},
 
 	// Unsupported statements
 	{Name: "TRUNCATE TABLE statements are unsupported", Pattern: regexp.MustCompile(`(?i)\bTRUNCATE\b`)},

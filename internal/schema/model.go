@@ -46,7 +46,8 @@ type CheckConstraint struct {
 
 // Index represents a btree index (the only type DSQL supports).
 type Index struct {
-	Name     string
-	Columns  []string
-	IsUnique bool
+	Name           string
+	Columns        []string
+	IncludeColumns []string
+	IsUnique       bool
 }

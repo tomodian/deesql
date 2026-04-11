@@ -75,7 +75,11 @@ func stripComments(s string) string {
 
 var (
 	createTableRe = regexp.MustCompile(`(?is)^CREATE\s+TABLE\s+(\w+)\s*\((.*)\)\s*$`)
-	createIndexRe = regexp.MustCompile(`(?i)^CREATE\s+(UNIQUE\s+)?INDEX\s+ASYNC\s+(\w+)\s+ON\s+(\w+)\s*\(([^)]+)\)$`)
+	createIndexRe = regexp.MustCompile(`(?i)^CREATE\s+(UNIQUE\s+)?INDEX\s+ASYNC\s+(\w+)\s+ON\s+(\w+)\s*\(([^)]+)\)(?:\s+INCLUDE\s*\(([^)]+)\))?$`)
+
+	// Statements the parser recognizes as valid DSQL SQL but does not manage
+	// (not part of table/index diffing). These are silently skipped.
+	skipRe = regexp.MustCompile(`(?is)^(?:CREATE\s+(?:OR\s+REPLACE\s+)?(?:VIEW|RECURSIVE\s+VIEW|FUNCTION|DOMAIN|SEQUENCE|ROLE|SCHEMA)|ALTER\s+(?:VIEW|SEQUENCE|ROLE)|DROP\s+(?:VIEW|FUNCTION|SEQUENCE|DOMAIN|ROLE|SCHEMA)|GRANT\b|REVOKE\b)`)
 )
 
 func parseStatements(stmts []string) (*Schema, error) {
@@ -100,16 +104,26 @@ func parseStatements(stmts []string) (*Schema, error) {
 			idxName := strings.ToLower(m[2])
 			tableName := strings.ToLower(m[3])
 			cols := parseColumnList(m[4])
+			var includeCols []string
+			if m[5] != "" {
+				includeCols = parseColumnList(m[5])
+			}
 
 			t, ok := tableMap[tableName]
 			if !ok {
 				return nil, fmt.Errorf("index %s references unknown table %s", idxName, tableName)
 			}
 			t.Indexes = append(t.Indexes, Index{
-				Name:     idxName,
-				Columns:  cols,
-				IsUnique: isUnique,
+				Name:           idxName,
+				Columns:        cols,
+				IncludeColumns: includeCols,
+				IsUnique:       isUnique,
 			})
+			continue
+		}
+
+		// Skip statements the parser doesn't manage (views, functions, etc.).
+		if skipRe.MatchString(stmt) {
 			continue
 		}
 

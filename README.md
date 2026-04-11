@@ -1,4 +1,4 @@
-[![test](https://github.com/tomodian/deesql/actions/workflows/test.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/test.yml) [![docker](https://github.com/tomodian/deesql/actions/workflows/docker.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/docker.yml)
+[![test](https://github.com/tomodian/deesql/actions/workflows/test.unit.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/test.unit.yml) [![e2e](https://github.com/tomodian/deesql/actions/workflows/test.e2e.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/test.e2e.yml) [![docker](https://github.com/tomodian/deesql/actions/workflows/docker.yml/badge.svg)](https://github.com/tomodian/deesql/actions/workflows/docker.yml)
 
 # deesql
 
@@ -103,17 +103,34 @@ deesql plan --endpoint <cluster>.dsql.<region>.on.aws --schema ./schema
 deesql apply --endpoint <cluster>.dsql.<region>.on.aws --schema ./schema
 ```
 
-5. Develop locally with the DSQL proxy:
+5. Develop locally with docker compose:
+
+```yaml
+# compose.yml
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+
+  deesql:
+    image: ghcr.io/tomodian/deesql:latest
+    command: ["proxy", "--listen", ":5432", "--upstream", "postgres:5432"]
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    depends_on:
+      - postgres
+```
 
 ```sh
-# Start a PostgreSQL container
-docker run -d --name pg -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:latest
-
-# Start the proxy
-deesql proxy --listen :15432 --upstream localhost:5432
-
-# Connect through the proxy -- unsupported SQL is rejected with DSQL error codes
-psql -h localhost -p 15432 -U postgres
+docker compose up -d
+psql -h localhost -p 15432 -U admin -d postgres
 ```
 
 ## How It Works
@@ -209,13 +226,26 @@ Start a DSQL-filtering proxy between a PostgreSQL client and backend.
 deesql proxy [--listen :15432] [--upstream localhost:5432]
 ```
 
-The proxy intercepts and blocks 35+ unsupported SQL patterns including:
+The proxy rewrites `CREATE INDEX ASYNC` to `CREATE INDEX CONCURRENTLY` for the PostgreSQL backend, and warns about transaction rule violations (multiple DDL, mixed DDL+DML).
+
+When `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` environment variables are set, the proxy handles authentication automatically -- apps configured for DSQL IAM auth work without credential changes.
+
+The proxy intercepts and blocks 40+ unsupported SQL patterns including:
 
 - Unsupported DDL: `CREATE DATABASE`, `CREATE EXTENSION`, `CREATE TRIGGER`, `CREATE TYPE`, `CREATE PROCEDURE`, `CREATE RULE`, `CREATE UNLOGGED TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE TABLE AS SELECT`
 - Table restrictions: `INHERITS`, `PARTITION BY`, `COLLATE`, `FOREIGN KEY`, `EXCLUDE`
 - Index restrictions: synchronous `CREATE INDEX` (must use `ASYNC`), `CONCURRENTLY`, non-btree types, `ASC`/`DESC` ordering
 - Unsupported statements: `TRUNCATE`, `ALTER SYSTEM`, `VACUUM`, `SAVEPOINT`, `LISTEN`/`NOTIFY`, `LOCK TABLE`
+- Session restrictions: `SET statement_timeout`, `SET lock_timeout`, non-REPEATABLE-READ isolation levels, bare `ANALYZE`
 - Function restrictions: non-SQL languages (`plpgsql`, `plv8`, etc.)
+
+### `sql`
+
+Execute a raw SQL file against Aurora DSQL (for cleanup, seeding, etc.).
+
+```sh
+deesql sql cleanup.sql --endpoint <endpoint>
+```
 
 ## Flags
 
@@ -231,12 +261,14 @@ The proxy intercepts and blocks 35+ unsupported SQL patterns including:
 | `--role-arn` | IAM role ARN to assume | (none) |
 | `--connect-timeout` | Connection timeout | `10s` |
 
-### apply
+### apply / sql
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--allow-hazards` | Hazard types to permit | (none) |
-| `--force` | Skip confirmation prompt | `false` |
+| `--allow-hazards` | Hazard types to permit (apply only) | (none) |
+| `--force` | Skip confirmation prompt (apply only) | `false` |
+| `--retries` | Max retries on OCC conflict (SQLSTATE 40001) | `5` |
+| `--retry-delay` | Initial delay between retries (doubles each attempt) | `2s` |
 
 ### proxy
 
@@ -289,8 +321,8 @@ Credentials are resolved via the standard [AWS SDK default credential chain](htt
 | Add column | Yes |
 | Drop column | No (DSQL limitation) |
 | Add/drop index | Yes (`CREATE INDEX ASYNC`) |
-| Add/drop check constraint | Yes |
-| Add/drop unique constraint | Yes |
+| Add/drop check constraint | No (DSQL limitation) |
+| Add/drop unique constraint | No (DSQL limitation) |
 | Change column type | No (DSQL limitation) |
 | Change NOT NULL | No (DSQL limitation) |
 | Change default | No (DSQL limitation) |

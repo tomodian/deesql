@@ -59,6 +59,12 @@ endif
 	@eval $$(aws configure export-credentials --format env $(if $(AWS_PROFILE),--profile $(AWS_PROFILE),) 2>/dev/null) || true; \
 	echo "Connecting to $(DSQL) (region: $(DSQL_REGION), user: $(DSQL_USER))"; \
 	echo ""; \
+	echo "=== Cleaning up previous run ===" && \
+	$(DEESQL_DSQL) sql /cleanup.sql \
+		--endpoint $(DSQL) \
+		--region $(DSQL_REGION) \
+		--user $(DSQL_USER) && \
+	echo "" && \
 	echo "=== Verifying schema ===" && \
 	$(DEESQL_DSQL) verify --schema /schema && \
 	echo "" && \

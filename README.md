@@ -2,7 +2,7 @@
 
 # deesql
 
-The missing toolkit for [Amazon Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/) -- schema migrations, compatibility checking, and a local development proxy, all in a single binary.
+The missing toolkit for [Amazon Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/) -- schema migrations, compatibility checking, and a local development proxy. Available as a **CLI** and as a **Go library**.
 
 deesql compares your desired schema (`.sql` files) against a live Aurora DSQL cluster and generates a migration plan. It also ships a local proxy server that lets you develop against a standard PostgreSQL container while enforcing DSQL compatibility at the wire protocol level.
 
@@ -131,6 +131,84 @@ services:
 ```sh
 docker compose up -d
 psql -h localhost -p 15432 -U admin -d postgres
+```
+
+## Go Library
+
+deesql can be imported as a Go library to integrate DSQL compatibility checks and migrations into your own code (e.g. unit tests, CI pipelines).
+
+```sh
+go get tomodian/deesql
+```
+
+### Verify schema compatibility
+
+Use `pkg/verify` to check `.sql` files or raw SQL strings for DSQL compatibility -- no database connection needed.
+
+```go
+import "tomodian/deesql/pkg/verify"
+
+// Check .sql files in directories
+violations, err := verify.CheckDirs([]string{"./schema"})
+
+// Check specific files
+violations, err := verify.CheckFiles([]string{"./schema/users.sql"})
+
+// Check raw SQL (e.g. in a unit test)
+violations := verify.CheckSQL("test.sql", `
+    CREATE TABLE users (
+        id SERIAL PRIMARY KEY,
+        data JSONB
+    );
+`)
+// violations[0].Rule == "SERIAL type not supported (use GENERATED AS IDENTITY)"
+// violations[1].Rule == "jsonb type not supported as column type ..."
+```
+
+### Plan and apply migrations
+
+Use `pkg/migrate` to generate and apply migration plans programmatically. You provide your own `*sql.DB` connection.
+
+```go
+import "tomodian/deesql/pkg/migrate"
+
+// Generate a migration plan
+planOut, err := migrate.GeneratePlan(ctx, migrate.GeneratePlanInput{
+    DB:          db, // your *sql.DB
+    SchemaFiles: []string{"./schema/users.sql"},
+})
+
+// Inspect the plan
+for _, stmt := range planOut.Plan.Statements {
+    fmt.Printf("%s %s: %s\n", stmt.Action, stmt.Resource, stmt.DDL)
+}
+fmt.Println(migrate.PlanSummary(planOut.Plan))
+
+// Check for hazards
+err = migrate.CheckHazards(ctx, migrate.CheckHazardsInput{
+    Plan:           planOut.Plan,
+    AllowedHazards: []string{"INDEX_BUILD"},
+})
+
+// Apply the plan
+err = migrate.Apply(ctx, migrate.ApplyInput{
+    DB:             db,
+    Plan:           planOut.Plan,
+    MaxRetries:     5,
+    RetryBaseDelay: 2 * time.Second,
+})
+```
+
+### Example: DSQL compatibility test
+
+```go
+func TestSchemaIsDSQLCompatible(t *testing.T) {
+    violations, err := verify.CheckDirs([]string{"./schema"})
+    require.NoError(t, err)
+    for _, v := range violations {
+        t.Errorf("%s:%d: %s\n  %s", v.File, v.Line, v.Rule, v.Context)
+    }
+}
 ```
 
 ## How It Works

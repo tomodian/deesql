@@ -1,4 +1,4 @@
-.PHONY: build run test
+.PHONY: build run test test-tools
 
 build:
 	go build -o deesql .

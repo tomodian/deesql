@@ -2,7 +2,7 @@
 
 CLI tool for schema migrations on Amazon Aurora DSQL.
 
-Go module: `tomodian/deesql`
+Go module: `github.com/tomodian/deesql`
 
 ## Commands
 

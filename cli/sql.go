@@ -9,8 +9,8 @@ import (
 
 	"database/sql"
 
-	"tomodian/deesql/internal/dsqlconn"
-	"tomodian/deesql/internal/ui"
+	"github.com/tomodian/deesql/internal/dsqlconn"
+	"github.com/tomodian/deesql/internal/ui"
 
 	"github.com/urfave/cli/v3"
 )

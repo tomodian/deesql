@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"tomodian/deesql/internal/planner"
-	"tomodian/deesql/internal/runner"
+	"github.com/tomodian/deesql/internal/planner"
+	"github.com/tomodian/deesql/internal/runner"
 
 	"github.com/go-playground/validator/v10"
 )

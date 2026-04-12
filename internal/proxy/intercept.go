@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"tomodian/deesql/internal/rules"
+	"github.com/tomodian/deesql/internal/rules"
 )
 
 var (

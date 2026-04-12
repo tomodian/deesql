@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"tomodian/deesql/internal/dsqlconn"
-	"tomodian/deesql/internal/output"
-	"tomodian/deesql/internal/planner"
+	"github.com/tomodian/deesql/internal/dsqlconn"
+	"github.com/tomodian/deesql/internal/output"
+	"github.com/tomodian/deesql/internal/planner"
 
 	"github.com/urfave/cli/v3"
 )

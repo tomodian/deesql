@@ -1,7 +1,7 @@
 package verify
 
 import (
-	pkgverify "github.com/tomodian/deesql/pkg/verify"
+	pkgverify "github.com/tomodian/deesql/verify"
 
 	"github.com/tomodian/deesql/internal/ui"
 )

@@ -1,9 +1,10 @@
 .PHONY: test clean build
 
 IMAGE = deesql:local
+ROOT  = $(CURDIR)/../..
 
 DEESQL = POSTGRES_USER=admin POSTGRES_PASSWORD=password \
-	go tool github.com/tomodian/deesql
+	go run $(ROOT)
 
 build:
 	docker build -t $(IMAGE) -f ../../images/Dockerfile ../..

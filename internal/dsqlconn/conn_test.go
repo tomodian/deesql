@@ -8,6 +8,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestConnectWithPassword(t *testing.T) {
+	t.Run("password auth skips region detection", func(t *testing.T) {
+		t.Setenv("POSTGRES_USER", "testuser")
+		t.Setenv("POSTGRES_PASSWORD", "testpass")
+
+		// Connect will attempt password auth to a non-existent host,
+		// but it should NOT fail on region detection for a non-DSQL endpoint.
+		_, err := Connect(context.Background(), ConnectInput{
+			Endpoint: "localhost:15432",
+			User:     "admin",
+		})
+		// Expect a connection error (host not listening), not a region detection error.
+		assert.Error(t, err)
+		assert.NotContains(t, err.Error(), "cannot detect region")
+		assert.Contains(t, err.Error(), "connecting to localhost:15432")
+	})
+
+	t.Run("password auth with default port", func(t *testing.T) {
+		t.Setenv("POSTGRES_USER", "testuser")
+		t.Setenv("POSTGRES_PASSWORD", "testpass")
+
+		_, err := Connect(context.Background(), ConnectInput{
+			Endpoint: "localhost",
+			User:     "admin",
+		})
+		assert.Error(t, err)
+		assert.NotContains(t, err.Error(), "cannot detect region")
+	})
+
+	t.Run("without POSTGRES_USER falls through to IAM auth", func(t *testing.T) {
+		// Ensure env vars are not set.
+		t.Setenv("POSTGRES_USER", "")
+
+		_, err := Connect(context.Background(), ConnectInput{
+			Endpoint: "bad-endpoint",
+			User:     "admin",
+		})
+		// Should fail on region detection (IAM path).
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot detect region")
+	})
+}
+
 func TestParseRegion(t *testing.T) {
 	t.Run("standard endpoint", func(t *testing.T) {
 		region, err := ParseRegion("abc123def456.dsql.us-east-1.on.aws")

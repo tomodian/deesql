@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/tomodian/deesql/internal/ui"
@@ -56,6 +58,11 @@ func ParseRegion(endpoint string) (string, error) {
 func Connect(ctx context.Context, in ConnectInput) (*ConnectOutput, error) {
 	if err := validate.Struct(in); err != nil {
 		return nil, fmt.Errorf("invalid connect input: %w", err)
+	}
+
+	// Password auth mode: skip IAM, TLS, and region detection.
+	if pgUser := os.Getenv("POSTGRES_USER"); pgUser != "" {
+		return connectWithPassword(ctx, in, pgUser)
 	}
 
 	ui.Step("Connecting to %s as %s", in.Endpoint, in.User)
@@ -144,6 +151,56 @@ func Connect(ctx context.Context, in ConnectInput) (*ConnectOutput, error) {
 	if err := db.QueryRowContext(connCtx, "SELECT 1").Scan(&one); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("connecting to DSQL (timeout %s): %w", timeout, err)
+	}
+	ui.Success("Connected to %s", in.Endpoint)
+
+	return &ConnectOutput{DB: db}, nil
+}
+
+func connectWithPassword(ctx context.Context, in ConnectInput, pgUser string) (*ConnectOutput, error) {
+	pgPass := os.Getenv("POSTGRES_PASSWORD")
+	ui.Info("Auth bypass enabled (POSTGRES_USER=%s)", pgUser)
+
+	host, portStr, err := net.SplitHostPort(in.Endpoint)
+	if err != nil {
+		// No port specified, use endpoint as host with default port.
+		host = in.Endpoint
+		portStr = "5432"
+	}
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port in endpoint %q: %w", in.Endpoint, err)
+	}
+
+	connCfg, err := pgx.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("parsing pgx config: %w", err)
+	}
+
+	timeout := in.ConnectTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+
+	connCfg.Host = host
+	connCfg.Port = uint16(port)
+	connCfg.User = pgUser
+	connCfg.Password = pgPass
+	connCfg.Database = "postgres"
+	connCfg.ConnectTimeout = timeout
+	connCfg.TLSConfig = nil
+
+	ui.Step("Connecting to %s:%d as %s (password auth)...", host, port, pgUser)
+	db := stdlib.OpenDB(*connCfg)
+	db.SetMaxOpenConns(1)
+
+	connCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var one int
+	if err := db.QueryRowContext(connCtx, "SELECT 1").Scan(&one); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("connecting to %s (timeout %s): %w", in.Endpoint, timeout, err)
 	}
 	ui.Success("Connected to %s", in.Endpoint)
 

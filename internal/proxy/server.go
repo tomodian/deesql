@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
-	"tomodian/deesql/internal/ui"
+	"github.com/tomodian/deesql/internal/ui"
 )
 
 // RunInput holds the configuration for the proxy server.

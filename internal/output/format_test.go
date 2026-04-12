@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"tomodian/deesql/internal/schema"
+	"github.com/tomodian/deesql/internal/schema"
 
 	"github.com/fatih/color"
 	"github.com/stretchr/testify/assert"

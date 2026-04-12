@@ -1,6 +1,6 @@
 package migrate
 
-import "tomodian/deesql/internal/schema"
+import "github.com/tomodian/deesql/internal/schema"
 
 // Action describes the type of change a statement performs.
 type Action string

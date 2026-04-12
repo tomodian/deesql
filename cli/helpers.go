@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"tomodian/deesql/internal/dsqlconn"
-	"tomodian/deesql/internal/verify"
+	"github.com/tomodian/deesql/internal/dsqlconn"
+	"github.com/tomodian/deesql/internal/verify"
 
 	"github.com/urfave/cli/v3"
 )

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"tomodian/deesql/cli"
+	"github.com/tomodian/deesql/cli"
 )
 
 func main() {

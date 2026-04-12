@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"tomodian/deesql/internal/rules"
+	"github.com/tomodian/deesql/internal/rules"
 )
 
 // Violation represents a single DSQL compatibility issue found in a SQL file.

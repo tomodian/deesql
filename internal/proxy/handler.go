@@ -21,7 +21,7 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/text/secure/precis"
 
-	"tomodian/deesql/internal/ui"
+	"github.com/tomodian/deesql/internal/ui"
 )
 
 const (

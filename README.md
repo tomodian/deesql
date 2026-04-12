@@ -41,7 +41,7 @@ deesql bridges that gap:
 ### Go
 
 ```sh
-go install tomodian/deesql@latest
+go install github.com/tomodian/deesql@latest
 ```
 
 ### Docker
@@ -138,7 +138,7 @@ psql -h localhost -p 15432 -U admin -d postgres
 deesql can be imported as a Go library to integrate DSQL compatibility checks and migrations into your own code (e.g. unit tests, CI pipelines).
 
 ```sh
-go get tomodian/deesql
+go get github.com/tomodian/deesql
 ```
 
 ### Verify schema compatibility
@@ -146,7 +146,7 @@ go get tomodian/deesql
 Use `pkg/verify` to check `.sql` files or raw SQL strings for DSQL compatibility -- no database connection needed.
 
 ```go
-import "tomodian/deesql/pkg/verify"
+import "github.com/tomodian/deesql/pkg/verify"
 
 // Check .sql files in directories
 violations, err := verify.CheckDirs([]string{"./schema"})
@@ -170,7 +170,7 @@ violations := verify.CheckSQL("test.sql", `
 Use `pkg/migrate` to generate and apply migration plans programmatically. You provide your own `*sql.DB` connection.
 
 ```go
-import "tomodian/deesql/pkg/migrate"
+import "github.com/tomodian/deesql/pkg/migrate"
 
 // Generate a migration plan
 planOut, err := migrate.GeneratePlan(ctx, migrate.GeneratePlanInput{

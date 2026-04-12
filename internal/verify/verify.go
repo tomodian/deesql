@@ -1,9 +1,9 @@
 package verify
 
 import (
-	pkgverify "tomodian/deesql/pkg/verify"
+	pkgverify "github.com/tomodian/deesql/pkg/verify"
 
-	"tomodian/deesql/internal/ui"
+	"github.com/tomodian/deesql/internal/ui"
 )
 
 // Violation is an alias for the public package type.

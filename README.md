@@ -143,10 +143,10 @@ go get github.com/tomodian/deesql
 
 ### Verify schema compatibility
 
-Use `pkg/verify` to check `.sql` files or raw SQL strings for DSQL compatibility -- no database connection needed.
+Use the `verify` package to check `.sql` files or raw SQL strings for DSQL compatibility -- no database connection needed.
 
 ```go
-import "github.com/tomodian/deesql/pkg/verify"
+import "github.com/tomodian/deesql/verify"
 
 // Check .sql files in directories
 violations, err := verify.CheckDirs([]string{"./schema"})
@@ -167,10 +167,10 @@ violations := verify.CheckSQL("test.sql", `
 
 ### Plan and apply migrations
 
-Use `pkg/migrate` to generate and apply migration plans programmatically. You provide your own `*sql.DB` connection.
+Use the `migrate` package to generate and apply migration plans programmatically. You provide your own `*sql.DB` connection.
 
 ```go
-import "github.com/tomodian/deesql/pkg/migrate"
+import "github.com/tomodian/deesql/migrate"
 
 // Generate a migration plan
 planOut, err := migrate.GeneratePlan(ctx, migrate.GeneratePlanInput{

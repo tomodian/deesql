@@ -12,7 +12,7 @@ No migration history table, no temp databases -- just declarative schema diffing
 
 [Aurora DSQL](https://aws.amazon.com/rds/aurora/dsql/) is a fantastic choice for building modern applications. It gives you a serverless, virtually unlimited, active-active distributed SQL database with strong consistency -- all at an affordable pay-per-request price point. And because it speaks the PostgreSQL wire protocol, your existing tools, drivers, and ORMs just work.
 
-The one catch: DSQL supports a subset of PostgreSQL. Features like `CREATE EXTENSION`, triggers, PL/pgSQL, and `FOREIGN KEY` constraints aren't available. This is a reasonable tradeoff for the scalability and simplicity DSQL provides, but it means existing migration tools (designed for full PostgreSQL) can generate SQL that DSQL rejects at apply time.
+The one catch: DSQL supports a subset of PostgreSQL. Features like `CREATE EXTENSION`, triggers, and PL/pgSQL aren't available, and DDL has its own rules: indexes are built with `CREATE INDEX ASYNC`, `CHECK` / `FOREIGN KEY` constraints are added to existing tables with `NOT VALID` and validated asynchronously, sequences need an explicit `CACHE`, and only one DDL statement may run per transaction. This is a reasonable tradeoff for the scalability and simplicity DSQL provides, but it means existing migration tools (designed for full PostgreSQL) can generate SQL that DSQL rejects at apply time.
 
 deesql bridges that gap:
 
@@ -158,11 +158,11 @@ violations, err := verify.CheckFiles([]string{"./schema/users.sql"})
 violations := verify.CheckSQL("test.sql", `
     CREATE TABLE users (
         id SERIAL PRIMARY KEY,
-        data JSONB
+        data XML
     );
 `)
 // violations[0].Rule == "SERIAL type not supported (use GENERATED AS IDENTITY)"
-// violations[1].Rule == "jsonb type not supported as column type ..."
+// violations[1].Rule == "xml type not supported"
 ```
 
 ### Plan and apply migrations
@@ -304,16 +304,18 @@ Start a DSQL-filtering proxy between a PostgreSQL client and backend.
 deesql proxy [--listen :15432] [--upstream localhost:5432]
 ```
 
-The proxy rewrites `CREATE INDEX ASYNC` to `CREATE INDEX CONCURRENTLY` for the PostgreSQL backend, and warns about transaction rule violations (multiple DDL, mixed DDL+DML).
+The proxy rewrites `CREATE INDEX ASYNC` to `CREATE INDEX CONCURRENTLY` and `ALTER TABLE ASYNC ... VALIDATE CONSTRAINT` to a synchronous `ALTER TABLE ... VALIDATE CONSTRAINT` for the PostgreSQL backend, and warns about transaction rule violations (multiple DDL, mixed DDL+DML).
 
 When `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` environment variables are set, the proxy handles authentication automatically -- apps configured for DSQL IAM auth work without credential changes.
 
 The proxy intercepts and blocks 40+ unsupported SQL patterns including:
 
 - Unsupported DDL: `CREATE DATABASE`, `CREATE EXTENSION`, `CREATE TRIGGER`, `CREATE TYPE`, `CREATE PROCEDURE`, `CREATE RULE`, `CREATE UNLOGGED TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE TABLE AS SELECT`
-- Table restrictions: `INHERITS`, `PARTITION BY`, `COLLATE`, `FOREIGN KEY`, `EXCLUDE`
-- Index restrictions: synchronous `CREATE INDEX` (must use `ASYNC`), `CONCURRENTLY`, non-btree types, `ASC`/`DESC` ordering
-- Unsupported statements: `TRUNCATE`, `ALTER SYSTEM`, `VACUUM`, `SAVEPOINT`, `LISTEN`/`NOTIFY`, `LOCK TABLE`
+- Table restrictions: `INHERITS`, `PARTITION BY`, `COLLATE`, `EXCLUDE`
+- ALTER TABLE restrictions: `ALTER COLUMN TYPE`, `SET NOT NULL`, `ADD PRIMARY KEY`, `ADD CHECK`/`FOREIGN KEY` without `NOT VALID`, `ADD UNIQUE` without `USING INDEX`
+- Index restrictions: synchronous `CREATE INDEX` (must use `ASYNC`), `CONCURRENTLY`, non-btree types, `ASC`/`DESC` ordering (`NULLS FIRST`/`LAST` is allowed)
+- Sequence / identity restrictions: missing `CACHE`, `CACHE` other than `1` or `>= 65536`, non-`bigint` sequences and identity columns
+- Unsupported statements: `TRUNCATE`, `VACUUM`, `SAVEPOINT`, `LISTEN`/`NOTIFY`, `LOCK TABLE`
 - Session restrictions: `SET statement_timeout`, `SET lock_timeout`, non-REPEATABLE-READ isolation levels, bare `ANALYZE`
 - Function restrictions: non-SQL languages (`plpgsql`, `plv8`, etc.)
 
@@ -372,38 +374,50 @@ Credentials are resolved via the standard [AWS SDK default credential chain](htt
 | Feature | Syntax | Notes |
 |---------|--------|-------|
 | Create table | `CREATE TABLE name (...)` | With columns, inline constraints |
-| Create index | `CREATE [UNIQUE] INDEX ASYNC name ON table (cols)` | DSQL requires `ASYNC` |
+| Create index | `CREATE [UNIQUE] INDEX ASYNC name ON table (keys) [INCLUDE (cols)] [NULLS [NOT] DISTINCT] [WHERE pred]` | DSQL requires `ASYNC`; keys may be columns or `(expressions)` with `NULLS FIRST/LAST` |
 | Primary key | `PRIMARY KEY (cols)` | Inline or table-level |
-| Unique constraint | `UNIQUE (cols)` | Inline or table-level |
+| Unique constraint | `UNIQUE [NULLS NOT DISTINCT] (cols)` | Inline or table-level |
 | Check constraint | `CHECK (expr)` | Inline or table-level |
-| Identity column | `GENERATED {ALWAYS\|BY DEFAULT} AS IDENTITY` | Not `SERIAL` |
-| Default value | `DEFAULT expr` | Literals or functions (`now()`, `gen_random_uuid()`) |
+| Foreign key | `REFERENCES t [(cols)]` / `FOREIGN KEY (cols) REFERENCES t (cols)` | `ON DELETE`/`ON UPDATE` actions, `MATCH FULL`, `DEFERRABLE` |
+| Identity column | `bigint GENERATED {ALWAYS\|BY DEFAULT} AS IDENTITY (CACHE n)` | `bigint` only; explicit `CACHE` of `1` or `>= 65536`. Not `SERIAL` |
+| Generated column | `GENERATED ALWAYS AS (expr) STORED` | |
+| Default value | `DEFAULT expr` | Literals or functions (`now()`, `gen_random_uuid()`, `nextval('seq')`) |
+| Sequence | `CREATE SEQUENCE name CACHE n [INCREMENT ...] [MINVALUE ...] [MAXVALUE ...] [START ...] [CYCLE] [OWNED BY t.c]` | `bigint` only; `CACHE` is required |
+| Extended statistics | `CREATE STATISTICS name [(kinds)] ON cols FROM table` | Max 5 per table |
+
+Views, functions, roles, grants, `ALTER SYSTEM`, `ALTER DEFAULT PRIVILEGES`, and `COMMENT ON` are accepted in schema files but not managed by the diff engine.
 
 ### Supported column types
 
 | Category | Types |
 |----------|-------|
 | Text | `TEXT`, `VARCHAR(N)`, `CHAR(N)` |
-| Numeric | `INTEGER`, `BIGINT`, `SMALLINT`, `REAL`, `DOUBLE PRECISION`, `NUMERIC` |
+| Numeric | `INTEGER`, `BIGINT`, `SMALLINT`, `REAL`, `DOUBLE PRECISION`, `NUMERIC(p,s)` (precision up to 1000) |
 | Boolean | `BOOLEAN` |
-| Date/Time | `TIMESTAMPTZ`, `TIMESTAMP`, `DATE`, `TIME`, `INTERVAL` |
+| Date/Time | `TIMESTAMPTZ`, `TIMESTAMP`, `DATE`, `TIME`, `TIMETZ`, `INTERVAL` |
 | Binary | `BYTEA` |
+| JSON | `JSON`, `JSONB` (not indexable) |
 | Other | `UUID` |
 
 ### Migration operations
 
-| Operation | Supported |
-|-----------|-----------|
-| Create table | Yes |
-| Drop table | Yes |
-| Add column | Yes |
-| Drop column | No (DSQL limitation) |
-| Add/drop index | Yes (`CREATE INDEX ASYNC`) |
-| Add/drop check constraint | No (DSQL limitation) |
-| Add/drop unique constraint | No (DSQL limitation) |
+| Operation | Generated DDL |
+|-----------|---------------|
+| Create / drop table | `CREATE TABLE` (ordered by foreign keys) / `DROP TABLE` |
+| Add column | `ALTER TABLE ... ADD COLUMN` |
+| Drop column | `ALTER TABLE ... DROP COLUMN` (not primary key columns) |
+| Change default | `ALTER COLUMN ... SET DEFAULT` / `DROP DEFAULT` |
+| Make column nullable | `ALTER COLUMN ... DROP NOT NULL` |
+| Make column NOT NULL | No (DSQL limitation) |
 | Change column type | No (DSQL limitation) |
-| Change NOT NULL | No (DSQL limitation) |
-| Change default | No (DSQL limitation) |
+| Identity | `ADD GENERATED ... AS IDENTITY`, `SET GENERATED`, `DROP IDENTITY` |
+| Generated column | `DROP EXPRESSION` (adding or changing an expression is not supported) |
+| Add/drop index | `CREATE INDEX ASYNC` / `DROP INDEX` (definition changes rebuild the index) |
+| Add check / foreign key | `ADD CONSTRAINT ... NOT VALID`, then `ALTER TABLE ASYNC ... VALIDATE CONSTRAINT` |
+| Add unique constraint | `CREATE UNIQUE INDEX ASYNC` (waits for the job), then `ADD CONSTRAINT ... UNIQUE USING INDEX` |
+| Drop constraint | `ALTER TABLE ... DROP CONSTRAINT` |
+| Sequences | `CREATE SEQUENCE` / `ALTER SEQUENCE` / `DROP SEQUENCE` |
+| Extended statistics | `CREATE STATISTICS` / `DROP STATISTICS` |
 | Change primary key | No (requires table recreation) |
 
 ## Hazard Types
@@ -412,9 +426,11 @@ Hazards warn about potentially dangerous operations:
 
 | Type | Description |
 |------|-------------|
-| `DELETES_DATA` | Drops a table or column and its data |
+| `DELETES_DATA` | Drops a table, column, or sequence and its data |
 | `INDEX_BUILD` | Async index build in progress |
 | `INDEX_DROPPED` | Dropping an index may degrade query performance |
+| `CORRECTNESS` | Drops a constraint or identity, loosening data-integrity guarantees |
+| `CONSTRAINT_VALIDATION` | Validates a new constraint on an existing table; the async job fails if existing rows violate it |
 
 Use `--allow-hazards` to permit specific types:
 

@@ -1,1 +1,5 @@
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS users;
+DROP SEQUENCE IF EXISTS order_number_seq;
+DROP SEQUENCE IF EXISTS legacy_seq;

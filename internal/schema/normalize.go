@@ -6,26 +6,33 @@ import (
 )
 
 var typeAliases = map[string]string{
-	"int":                           "integer",
-	"int4":                          "integer",
-	"int8":                          "bigint",
-	"int2":                          "smallint",
-	"float4":                        "real",
-	"float8":                        "double precision",
-	"float":                         "double precision",
-	"bool":                          "boolean",
-	"timestamp with time zone":      "timestamptz",
-	"timestamp without time zone":   "timestamp",
-	"time with time zone":           "timetz",
-	"time without time zone":        "time",
+	"int":                         "integer",
+	"int4":                        "integer",
+	"int8":                        "bigint",
+	"int2":                        "smallint",
+	"float4":                      "real",
+	"float8":                      "double precision",
+	"float":                       "double precision",
+	"bool":                        "boolean",
+	"decimal":                     "numeric",
+	"character varying":           "varchar",
+	"timestamp with time zone":    "timestamptz",
+	"timestamp without time zone": "timestamp",
+	"time with time zone":         "timetz",
+	"time without time zone":      "time",
 }
 
 var charVaryingRe = regexp.MustCompile(`(?i)^character varying\((\d+)\)$`)
 var charFixedRe = regexp.MustCompile(`(?i)^character\((\d+)\)$`)
 
+var typeParenSpaceRe = regexp.MustCompile(`\s*([(),])\s*`)
+
 // NormalizeType converts a SQL type to its canonical lowercase form.
 func NormalizeType(raw string) string {
 	s := strings.TrimSpace(strings.ToLower(raw))
+	s = strings.Join(strings.Fields(s), " ")
+	s = typeParenSpaceRe.ReplaceAllString(s, "$1")
+	s = strings.TrimSpace(s)
 
 	if m := charVaryingRe.FindStringSubmatch(s); m != nil {
 		return "varchar(" + m[1] + ")"
@@ -87,7 +94,7 @@ func normalizeDefault(d string) string {
 // Strip type casts. Matches ::type including multi-word types like "character varying",
 // "double precision", "timestamp with time zone", types with precision like "numeric(10,2)",
 // and array casts like "::text[]".
-var trivialCastRe = regexp.MustCompile(`::(?:character varying|double precision|timestamp with(?:out)? time zone|time with(?:out)? time zone|text|integer|bigint|smallint|boolean|real|numeric|timestamptz|timestamp|date|timetz|time|uuid|bytea|varchar|char)(?:\(\d+(?:,\s*\d+)?\))?(?:\[\])?`)
+var trivialCastRe = regexp.MustCompile(`::(?:character varying|double precision|timestamp with(?:out)? time zone|time with(?:out)? time zone|text|integer|bigint|smallint|boolean|real|numeric|timestamptz|timestamp|date|timetz|time|uuid|bytea|varchar|char|regclass|jsonb|json)(?:\(\d+(?:,\s*\d+)?\))?(?:\[\])?`)
 
 // normalizeCheck normalizes a CHECK constraint expression for comparison.
 // PostgreSQL rewrites IN (...) to = ANY (ARRAY[...]) and adds type casts.
@@ -128,4 +135,37 @@ func normalizeCheck(expr string) string {
 	s = strings.Join(strings.Fields(s), " ")
 
 	return s
+}
+
+// typesEqual compares two normalized types. Aurora DSQL stores an
+// unconstrained NUMERIC as numeric(18,6), so the two are treated as equal.
+func typesEqual(a, b string) bool {
+	a, b = NormalizeType(a), NormalizeType(b)
+	if a == b {
+		return true
+	}
+	isDefaultNumeric := func(s string) bool { return s == "numeric" || s == "numeric(18,6)" }
+	return isDefaultNumeric(a) && isDefaultNumeric(b)
+}
+
+// normalizeExpr normalizes an arbitrary SQL expression (index key, partial
+// index predicate, generated column, statistics expression) for comparison.
+func normalizeExpr(expr string) string {
+	return normalizeCheck(expr)
+}
+
+var (
+	trailingAscRe       = regexp.MustCompile(`\s+asc$`)
+	trailingNullsLastRe = regexp.MustCompile(`\s+nulls\s+last$`)
+)
+
+// normalizeIndexElem normalizes an index key element for comparison. ASC and
+// NULLS LAST are the defaults for ascending btree keys and are dropped.
+func normalizeIndexElem(elem string) string {
+	s := strings.Join(strings.Fields(strings.ToLower(elem)), " ")
+	if !strings.Contains(s, " desc") {
+		s = trailingNullsLastRe.ReplaceAllString(s, "")
+	}
+	s = trailingAscRe.ReplaceAllString(s, "")
+	return normalizeExpr(s)
 }

@@ -20,6 +20,9 @@ const (
 	HazardIndexBuild   HazardType = "INDEX_BUILD"
 	HazardIndexDropped HazardType = "INDEX_DROPPED"
 	HazardCorrectness  HazardType = "CORRECTNESS"
+	// HazardConstraintValidation marks VALIDATE CONSTRAINT on an existing
+	// table: the async job fails if existing rows violate the constraint.
+	HazardConstraintValidation HazardType = "CONSTRAINT_VALIDATION"
 )
 
 // Hazard describes a potential risk of a migration statement.
@@ -34,6 +37,9 @@ type Statement struct {
 	Action   Action
 	Resource string // e.g. "table.users", "index.idx_users_email"
 	Hazards  []Hazard
+	// WaitForJob blocks on the async job started by this statement
+	// (sys.wait_for_job) before the next statement runs.
+	WaitForJob bool
 }
 
 // Plan is an ordered list of DDL statements to migrate a schema.
@@ -50,10 +56,11 @@ func toInternal(p Plan) schema.Plan {
 			hazards[j] = schema.Hazard{Type: h.Type, Message: h.Message}
 		}
 		stmts[i] = schema.Statement{
-			DDL:      s.DDL,
-			Action:   schema.Action(s.Action),
-			Resource: s.Resource,
-			Hazards:  hazards,
+			DDL:        s.DDL,
+			Action:     schema.Action(s.Action),
+			Resource:   s.Resource,
+			Hazards:    hazards,
+			WaitForJob: s.WaitForJob,
 		}
 	}
 	return schema.Plan{Statements: stmts}
@@ -68,10 +75,11 @@ func fromInternal(p schema.Plan) Plan {
 			hazards[j] = Hazard{Type: h.Type, Message: h.Message}
 		}
 		stmts[i] = Statement{
-			DDL:      s.DDL,
-			Action:   Action(s.Action),
-			Resource: s.Resource,
-			Hazards:  hazards,
+			DDL:        s.DDL,
+			Action:     Action(s.Action),
+			Resource:   s.Resource,
+			Hazards:    hazards,
+			WaitForJob: s.WaitForJob,
 		}
 	}
 	return Plan{Statements: stmts}

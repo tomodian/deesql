@@ -64,6 +64,10 @@ CREATE TABLE users (
 		mock.ExpectQuery("SELECT c.relname").
 			WillReturnRows(sqlmock.NewRows([]string{"relname"}))
 
+		// introspectSequences
+		mock.ExpectQuery("FROM pg_sequence").
+			WillReturnRows(sqlmock.NewRows([]string{"relname", "seqincrement", "seqmin", "seqmax", "seqstart", "seqcache", "seqcycle"}))
+
 		out, err := GeneratePlan(context.Background(), GeneratePlanInput{
 			DB:          db,
 			SchemaFiles: []string{f},
@@ -94,10 +98,10 @@ CREATE TABLE users (
 		mock.ExpectQuery("SELECT").
 			WillReturnRows(sqlmock.NewRows([]string{
 				"attname", "format_type", "is_nullable", "default",
-				"is_identity", "identity_char", "attnum",
+				"is_identity", "identity_char", "attgenerated", "attnum",
 			}).
-				AddRow("id", "text", false, "", false, "", 1).
-				AddRow("name", "text", false, "", false, "", 2))
+				AddRow("id", "text", false, "", false, "", "", 1).
+				AddRow("name", "text", false, "", false, "", "", 2))
 
 		// introspectConstraints
 		mock.ExpectQuery("SELECT").
@@ -106,7 +110,15 @@ CREATE TABLE users (
 
 		// introspectIndexes
 		mock.ExpectQuery("SELECT").
-			WillReturnRows(sqlmock.NewRows([]string{"relname", "indisunique"}))
+			WillReturnRows(sqlmock.NewRows([]string{"relname", "indexdef"}))
+
+		// introspectStatistics
+		mock.ExpectQuery("FROM pg_statistic_ext").
+			WillReturnRows(sqlmock.NewRows([]string{"stxname", "def"}))
+
+		// introspectSequences
+		mock.ExpectQuery("FROM pg_sequence").
+			WillReturnRows(sqlmock.NewRows([]string{"relname", "seqincrement", "seqmin", "seqmax", "seqstart", "seqcache", "seqcycle"}))
 
 		out, err := GeneratePlan(context.Background(), GeneratePlanInput{
 			DB:          db,

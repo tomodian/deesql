@@ -19,6 +19,9 @@ const (
 	HazardIndexBuild   HazardType = "INDEX_BUILD"
 	HazardIndexDropped HazardType = "INDEX_DROPPED"
 	HazardCorrectness  HazardType = "CORRECTNESS"
+	// HazardConstraintValidation marks VALIDATE CONSTRAINT on an existing
+	// table: the async job fails if existing rows violate the constraint.
+	HazardConstraintValidation HazardType = "CONSTRAINT_VALIDATION"
 )
 
 // Hazard describes a potential risk of a migration statement.
@@ -37,6 +40,10 @@ type Statement struct {
 	Action   Action
 	Resource string // e.g. "table.users", "index.idx_users_email"
 	Hazards  []Hazard
+	// WaitForJob makes the runner block on the async job this statement
+	// starts (sys.wait_for_job) before running the next statement. Used when
+	// a later statement needs the result, e.g. ADD CONSTRAINT ... USING INDEX.
+	WaitForJob bool
 }
 
 // ToSQL returns the DDL with a trailing semicolon.

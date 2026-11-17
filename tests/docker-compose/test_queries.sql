@@ -17,6 +17,10 @@ INSERT INTO settings (scope, key, value) VALUES ('global', 'theme', 'dark');
 INSERT INTO products (sku, name, price, weight_kg, volume_cm3, tags)
 VALUES ('SKU-001', 'Widget', 29.99, 0.5, 120.75, 'electronics,gadgets');
 
+INSERT INTO orders (user_id, qty, unit_price, metadata)
+SELECT u.id, 3, 9.99, '{"channel": "web"}'::jsonb
+FROM users u WHERE u.email = 'alice@example.com';
+
 -- UPDATE with FROM
 UPDATE tasks SET assignee_id = u.id
 FROM users u
@@ -60,6 +64,11 @@ SELECT name, 'project' AS type FROM projects;
 
 -- ANALYZE (must specify table name on DSQL)
 ANALYZE users;
+
+-- Foreign key, generated column, and JSONB at query time
+SELECT o.number, o.total, o.metadata->>'channel' AS channel, u.email
+FROM orders o
+JOIN users u ON u.id = o.user_id;
 
 -- Verify everything
 SELECT 'All test queries passed' AS result;

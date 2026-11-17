@@ -35,8 +35,6 @@ var verifyOnlyRules = []rules.Rule{
 	{Name: "tsvector/tsquery types not supported", Pattern: regexp.MustCompile(`(?i)\b(tsvector|tsquery)\b`)},
 	{Name: "range types not supported", Pattern: regexp.MustCompile(`(?i)\b(int4range|int8range|numrange|tsrange|tstzrange|daterange)\b`)},
 	{Name: "hstore type not supported", Pattern: regexp.MustCompile(`(?i)\bhstore\b`)},
-	{Name: "jsonb type not supported as column type (store as text, cast at query time)", Pattern: regexp.MustCompile(`(?i)\bjsonb\b`)},
-	{Name: "json type not supported as column type (store as text, cast at query time)", Pattern: regexp.MustCompile(`(?i)\bjson\b`)},
 
 	// Unsupported index types
 	{Name: "only btree indexes supported (hash not supported)", Pattern: regexp.MustCompile(`(?i)\bUSING\s+hash\b`)},
@@ -47,8 +45,6 @@ var verifyOnlyRules = []rules.Rule{
 	{Name: "CREATE INDEX CONCURRENTLY not supported (use CREATE INDEX ASYNC)", Pattern: regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY\b`)},
 
 	// Unsupported constraints
-	{Name: "FOREIGN KEY constraint not supported", Pattern: regexp.MustCompile(`(?i)\bREFERENCES\s+\w+`)},
-	{Name: "FOREIGN KEY constraint not supported", Pattern: regexp.MustCompile(`(?i)\bFOREIGN\s+KEY\b`)},
 	{Name: "EXCLUDE constraint not supported", Pattern: regexp.MustCompile(`(?i)\bEXCLUDE\s+(USING\s+)?\(`)},
 }
 
@@ -59,11 +55,6 @@ var allVerifyRules = func() []rules.Rule {
 	all = append(all, verifyOnlyRules...)
 	return all
 }()
-
-var (
-	createIndexRe      = regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+`)
-	createIndexAsyncRe = regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+ASYNC\b`)
-)
 
 // CheckDirs verifies all .sql files found in the given directories.
 func CheckDirs(dirs []string) ([]Violation, error) {
@@ -113,15 +104,19 @@ func CheckSQL(name, sql string) []Violation {
 				})
 			}
 		}
+	}
 
-		// Check CREATE INDEX without ASYNC.
-		if createIndexRe.MatchString(line) && !createIndexAsyncRe.MatchString(line) {
-			violations = append(violations, Violation{
-				File:    name,
-				Line:    i + 1,
-				Rule:    "CREATE INDEX must use ASYNC (use CREATE INDEX ASYNC)",
-				Context: trimmed,
-			})
+	// Statement-level rules (may span multiple lines).
+	for _, stmt := range rules.Split(sql) {
+		for _, r := range rules.StatementRules {
+			if msg := r.Match(stmt.Text); msg != "" {
+				violations = append(violations, Violation{
+					File:    name,
+					Line:    stmt.Line,
+					Rule:    msg,
+					Context: strings.TrimSpace(lines[stmt.Line-1]),
+				})
+			}
 		}
 	}
 

@@ -8,13 +8,12 @@ import (
 )
 
 var (
-	// CREATE INDEX without ASYNC: matched separately because Go regexp
-	// doesn't support negative lookahead.
-	createIndexRe      = regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+`)
-	createIndexAsyncRe = regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+ASYNC\b`)
-
 	// rewriteAsyncRe replaces ASYNC with CONCURRENTLY for the PostgreSQL backend.
 	rewriteAsyncRe = regexp.MustCompile(`(?i)(\bCREATE\s+(UNIQUE\s+)?INDEX\s+)ASYNC\s+`)
+
+	// rewriteAlterAsyncRe drops ASYNC from ALTER TABLE ASYNC ... VALIDATE
+	// CONSTRAINT, which PostgreSQL runs synchronously.
+	rewriteAlterAsyncRe = regexp.MustCompile(`(?i)(\bALTER\s+TABLE\s+)ASYNC\s+`)
 )
 
 // proxyOnlyBefore are proxy-specific rules that must be checked before shared
@@ -27,10 +26,8 @@ var proxyOnlyBefore = []rules.Rule{
 
 // proxyOnlyAfter are proxy-specific rules checked after shared rules.
 var proxyOnlyAfter = []rules.Rule{
-	{Name: "ALTER SYSTEM statements are unsupported", Pattern: regexp.MustCompile(`(?i)\bALTER\s+SYSTEM\b`)},
 	{Name: "VACUUM statements are unsupported", Pattern: regexp.MustCompile(`(?i)\bVACUUM\b`)},
 	{Name: "CREATE TABLE COLLATE is unsupported", Pattern: regexp.MustCompile(`(?i)\bCOLLATE\s+\S+`)},
-	{Name: "CREATE Index with ordering ASC or DESC is unsupported", Pattern: regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\b.*\b(ASC|DESC)\b`)},
 
 	// CREATE PROCEDURE / RULE / UNLOGGED TABLE
 	{Name: "CREATE PROCEDURE statements are unsupported", Pattern: regexp.MustCompile(`(?i)\bCREATE\s+(OR\s+REPLACE\s+)?PROCEDURE\b`)},
@@ -48,8 +45,6 @@ var proxyOnlyAfter = []rules.Rule{
 	{Name: "CREATE INDEX CONCURRENTLY not supported (use CREATE INDEX ASYNC)", Pattern: regexp.MustCompile(`(?i)\bCREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY\b`)},
 
 	// Unsupported constraints
-	{Name: "FOREIGN KEY constraint not supported", Pattern: regexp.MustCompile(`(?i)\bFOREIGN\s+KEY\b`)},
-	{Name: "FOREIGN KEY constraint not supported", Pattern: regexp.MustCompile(`(?i)\bREFERENCES\s+\w+`)},
 	{Name: "EXCLUDE constraint not supported", Pattern: regexp.MustCompile(`(?i)\bEXCLUDE\s+(USING\s+)?\(`)},
 
 	// Savepoints (DSQL does not support savepoints)
@@ -77,12 +72,14 @@ var proxyOnlyAfter = []rules.Rule{
 }
 
 // allProxyRules combines proxy-specific (before) + shared + proxy-specific (after)
-// to ensure more specific patterns are checked before generic ones.
+// + statement-level rules to ensure more specific patterns are checked before
+// generic ones.
 var allProxyRules = func() []rules.Rule {
-	all := make([]rules.Rule, 0, len(proxyOnlyBefore)+len(rules.SharedRules)+len(proxyOnlyAfter))
+	all := make([]rules.Rule, 0, len(proxyOnlyBefore)+len(rules.SharedRules)+len(proxyOnlyAfter)+len(rules.StatementRules))
 	all = append(all, proxyOnlyBefore...)
 	all = append(all, rules.SharedRules...)
 	all = append(all, proxyOnlyAfter...)
+	all = append(all, rules.StatementRules...)
 	return all
 }()
 
@@ -90,7 +87,7 @@ var allProxyRules = func() []rules.Rule {
 // DSQL-unsupported feature, or "" if the statement is allowed.
 func Check(sql string) string {
 	for _, stmt := range splitStatements(sql) {
-		stmt = strings.TrimSpace(stmt)
+		stmt = strings.TrimSpace(rules.StripComments(stmt))
 		if stmt == "" {
 			continue
 		}
@@ -99,18 +96,16 @@ func Check(sql string) string {
 				return msg
 			}
 		}
-		// CREATE INDEX without ASYNC (separate check — Go regexp lacks negative lookahead).
-		if createIndexRe.MatchString(stmt) && !createIndexAsyncRe.MatchString(stmt) {
-			return "CREATE INDEX must use ASYNC (use CREATE INDEX ASYNC)"
-		}
 	}
 	return ""
 }
 
 // Rewrite converts DSQL-specific SQL to PostgreSQL-compatible SQL.
-// CREATE [UNIQUE] INDEX ASYNC → CREATE [UNIQUE] INDEX CONCURRENTLY.
+//   - CREATE [UNIQUE] INDEX ASYNC → CREATE [UNIQUE] INDEX CONCURRENTLY
+//   - ALTER TABLE ASYNC → ALTER TABLE (VALIDATE CONSTRAINT runs synchronously)
 func Rewrite(sql string) string {
-	return rewriteAsyncRe.ReplaceAllString(sql, "${1}CONCURRENTLY ")
+	sql = rewriteAsyncRe.ReplaceAllString(sql, "${1}CONCURRENTLY ")
+	return rewriteAlterAsyncRe.ReplaceAllString(sql, "${1}")
 }
 
 // TxState tracks transaction state for DDL/DML enforcement warnings.

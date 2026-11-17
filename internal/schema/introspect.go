@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/tomodian/deesql/internal/ui"
@@ -46,7 +47,12 @@ func Introspect(ctx context.Context, in IntrospectInput) (*IntrospectOutput, err
 		tables = append(tables, *t)
 	}
 
-	return &IntrospectOutput{Schema: Schema{Tables: tables}}, nil
+	sequences, err := introspectSequences(ctx, in.DB)
+	if err != nil {
+		return nil, err
+	}
+
+	return &IntrospectOutput{Schema: Schema{Tables: tables, Sequences: sequences}}, nil
 }
 
 func listTables(ctx context.Context, db *sql.DB) ([]string, error) {
@@ -83,12 +89,16 @@ func introspectTable(ctx context.Context, db *sql.DB, name string) (*Table, erro
 		return nil, err
 	}
 
-	t.PrimaryKey, t.UniqueConstraints, t.CheckConstraints, err = introspectConstraints(ctx, db, name)
-	if err != nil {
+	if err := introspectConstraints(ctx, db, t); err != nil {
 		return nil, err
 	}
 
 	t.Indexes, err = introspectIndexes(ctx, db, name)
+	if err != nil {
+		return nil, err
+	}
+
+	t.Statistics, err = introspectStatistics(ctx, db, name)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +115,7 @@ func introspectColumns(ctx context.Context, db *sql.DB, table string) ([]Column,
 			COALESCE(pg_get_expr(d.adbin, d.adrelid), ''),
 			a.attidentity != '',
 			a.attidentity,
+			a.attgenerated::text,
 			a.attnum
 		FROM pg_attribute a
 		LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
@@ -121,8 +132,8 @@ func introspectColumns(ctx context.Context, db *sql.DB, table string) ([]Column,
 	var cols []Column
 	for rows.Next() {
 		var col Column
-		var identityChar string
-		if err := rows.Scan(&col.Name, &col.Type, &col.IsNullable, &col.Default, &col.IsIdentity, &identityChar, &col.OrdinalPosition); err != nil {
+		var identityChar, generatedChar string
+		if err := rows.Scan(&col.Name, &col.Type, &col.IsNullable, &col.Default, &col.IsIdentity, &identityChar, &generatedChar, &col.OrdinalPosition); err != nil {
 			return nil, err
 		}
 		col.Type = NormalizeType(col.Type)
@@ -140,12 +151,18 @@ func introspectColumns(ctx context.Context, db *sql.DB, table string) ([]Column,
 			col.Default = ""
 		}
 
+		// For stored generated columns pg_attrdef holds the generation expression.
+		if generatedChar == "s" {
+			col.Generated = col.Default
+			col.Default = ""
+		}
+
 		cols = append(cols, col)
 	}
 	return cols, rows.Err()
 }
 
-func introspectConstraints(ctx context.Context, db *sql.DB, table string) (*PrimaryKey, []UniqueConstraint, []CheckConstraint, error) {
+func introspectConstraints(ctx context.Context, db *sql.DB, t *Table) error {
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			con.conname,
@@ -153,38 +170,58 @@ func introspectConstraints(ctx context.Context, db *sql.DB, table string) (*Prim
 			pg_get_constraintdef(con.oid)
 		FROM pg_constraint con
 		WHERE con.conrelid = $1::regclass
-		  AND con.contype IN ('p', 'u', 'c')
+		  AND con.contype IN ('p', 'u', 'c', 'f')
 		ORDER BY con.conname
-	`, "public."+table)
+	`, "public."+t.Name)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("listing constraints for %s: %w", table, err)
+		return fmt.Errorf("listing constraints for %s: %w", t.Name, err)
 	}
 	defer rows.Close()
-
-	var pk *PrimaryKey
-	var ucs []UniqueConstraint
-	var ccs []CheckConstraint
 
 	for rows.Next() {
 		var name, contype, def string
 		if err := rows.Scan(&name, &contype, &def); err != nil {
-			return nil, nil, nil, err
+			return err
 		}
+		def, notValid := stripNotValid(def)
 
 		switch contype {
 		case "p":
-			cols := parseConstraintDefColumns(def)
-			pk = &PrimaryKey{Name: name, Columns: cols}
+			t.PrimaryKey = &PrimaryKey{Name: name, Columns: parseConstraintDefColumns(def)}
 		case "u":
-			cols := parseConstraintDefColumns(def)
-			ucs = append(ucs, UniqueConstraint{Name: name, Columns: cols})
+			t.UniqueConstraints = append(t.UniqueConstraints, UniqueConstraint{
+				Name:             name,
+				Columns:          parseConstraintDefColumns(def),
+				NullsNotDistinct: nullsNotDistinctRe.MatchString(def),
+			})
 		case "c":
-			expr := extractCheckExpression(def)
-			ccs = append(ccs, CheckConstraint{Name: name, Expression: expr})
+			t.CheckConstraints = append(t.CheckConstraints, CheckConstraint{
+				Name:       name,
+				Expression: extractCheckExpression(def),
+				NotValid:   notValid,
+			})
+		case "f":
+			fk, err := parseForeignKeyDef(def)
+			if err != nil {
+				return fmt.Errorf("constraint %s.%s: %w", t.Name, name, err)
+			}
+			fk.Name = name
+			fk.NotValid = notValid
+			t.ForeignKeys = append(t.ForeignKeys, *fk)
 		}
 	}
 
-	return pk, ucs, ccs, rows.Err()
+	return rows.Err()
+}
+
+var notValidSuffixRe = regexp.MustCompile(`(?i)\s+NOT\s+VALID\s*$`)
+
+// stripNotValid removes a trailing "NOT VALID" from a constraint definition.
+func stripNotValid(def string) (string, bool) {
+	if loc := notValidSuffixRe.FindStringIndex(def); loc != nil {
+		return def[:loc[0]], true
+	}
+	return def, false
 }
 
 // parseConstraintDefColumns extracts column names from constraint def like
@@ -213,10 +250,12 @@ func extractCheckExpression(def string) string {
 }
 
 func introspectIndexes(ctx context.Context, db *sql.DB, table string) ([]Index, error) {
+	// Constraint-backed indexes (PK, UNIQUE) are managed via constraints.
+	// Invalid indexes (still building or failed) are skipped.
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			ic.relname,
-			i.indisunique
+			pg_get_indexdef(i.indexrelid)
 		FROM pg_index i
 		JOIN pg_class ic ON ic.oid = i.indexrelid
 		JOIN pg_class tc ON tc.oid = i.indrelid
@@ -237,51 +276,85 @@ func introspectIndexes(ctx context.Context, db *sql.DB, table string) ([]Index, 
 
 	var indexes []Index
 	for rows.Next() {
-		var idx Index
-		if err := rows.Scan(&idx.Name, &idx.IsUnique); err != nil {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
 			return nil, err
 		}
-		indexes = append(indexes, idx)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
-
-	// Fetch columns for each index (requires the connection to be free).
-	for i, idx := range indexes {
-		cols, err := introspectIndexColumns(ctx, db, table, idx.Name)
+		_, idx, err := parseIndexDef(def, false)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parsing definition of index %s: %w", name, err)
 		}
-		indexes[i].Columns = cols
+		idx.Name = strings.ToLower(name)
+		indexes = append(indexes, *idx)
 	}
-
-	return indexes, nil
+	return indexes, rows.Err()
 }
 
-func introspectIndexColumns(ctx context.Context, db *sql.DB, table, indexName string) ([]string, error) {
+func introspectStatistics(ctx context.Context, db *sql.DB, table string) ([]Statistics, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT a.attname
-		FROM pg_index i
-		JOIN pg_class ic ON ic.oid = i.indexrelid
-		CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
-		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum
-		WHERE ic.relname = $1
-		ORDER BY x.ord
-	`, indexName)
+		SELECT
+			s.stxname,
+			pg_get_statisticsobjdef(s.oid)
+		FROM pg_statistic_ext s
+		WHERE s.stxrelid = $1::regclass
+		ORDER BY s.stxname
+	`, "public."+table)
 	if err != nil {
-		return nil, fmt.Errorf("listing columns for index %s: %w", indexName, err)
+		return nil, fmt.Errorf("listing statistics for %s: %w", table, err)
 	}
 	defer rows.Close()
 
-	var cols []string
+	var stats []Statistics
 	for rows.Next() {
-		var col string
-		if err := rows.Scan(&col); err != nil {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
 			return nil, err
 		}
-		cols = append(cols, strings.ToLower(col))
+		_, st, err := parseStatisticsDef(def)
+		if err != nil {
+			return nil, fmt.Errorf("parsing definition of statistics %s: %w", name, err)
+		}
+		st.Name = strings.ToLower(name)
+		stats = append(stats, *st)
 	}
-	return cols, rows.Err()
+	return stats, rows.Err()
+}
+
+func introspectSequences(ctx context.Context, db *sql.DB) ([]Sequence, error) {
+	// Sequences backing identity columns (deptype 'i') are managed through
+	// the column definition and excluded here.
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			c.relname,
+			s.seqincrement,
+			s.seqmin,
+			s.seqmax,
+			s.seqstart,
+			s.seqcache,
+			s.seqcycle
+		FROM pg_sequence s
+		JOIN pg_class c ON c.oid = s.seqrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public'
+		  AND NOT EXISTS (
+			  SELECT 1 FROM pg_depend d
+			  WHERE d.objid = c.oid AND d.deptype = 'i'
+		  )
+		ORDER BY c.relname
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing sequences: %w", err)
+	}
+	defer rows.Close()
+
+	var seqs []Sequence
+	for rows.Next() {
+		var seq Sequence
+		if err := rows.Scan(&seq.Name, &seq.Increment, &seq.MinValue, &seq.MaxValue, &seq.Start, &seq.Cache, &seq.Cycle); err != nil {
+			return nil, err
+		}
+		seq.Name = strings.ToLower(seq.Name)
+		seqs = append(seqs, seq)
+	}
+	return seqs, rows.Err()
 }

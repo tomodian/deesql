@@ -13,7 +13,6 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-
 var validate = validator.New()
 
 // CheckHazardsInput is the input for CheckHazards.
@@ -24,7 +23,7 @@ type CheckHazardsInput struct {
 
 // ExecuteInput is the input for Execute.
 type ExecuteInput struct {
-	DB             *sql.DB       `validate:"required"`
+	DB             *sql.DB `validate:"required"`
 	Plan           schema.Plan
 	MaxRetries     int
 	RetryBaseDelay time.Duration
@@ -72,6 +71,7 @@ func Execute(ctx context.Context, in ExecuteInput) error {
 			Num:        i + 1,
 			MaxRetries: in.MaxRetries,
 			BaseDelay:  in.RetryBaseDelay,
+			WaitForJob: stmt.WaitForJob,
 		}); err != nil {
 			return err
 		}
@@ -81,19 +81,20 @@ func Execute(ctx context.Context, in ExecuteInput) error {
 }
 
 type executeWithRetryInput struct {
-	DB         *sql.DB       `validate:"required"`
-	SQL        string        `validate:"required"`
+	DB         *sql.DB `validate:"required"`
+	SQL        string  `validate:"required"`
 	DDL        string
 	Num        int
 	MaxRetries int
 	BaseDelay  time.Duration
+	WaitForJob bool
 }
 
 func executeWithRetry(ctx context.Context, in executeWithRetryInput) error {
 	delay := in.BaseDelay
 
 	for attempt := 0; attempt <= in.MaxRetries; attempt++ {
-		_, err := in.DB.ExecContext(ctx, in.SQL)
+		err := execStatement(ctx, in.DB, in.SQL, in.WaitForJob, in.Num)
 		if err == nil {
 			return nil
 		}
@@ -114,6 +115,49 @@ func executeWithRetry(ctx context.Context, in executeWithRetryInput) error {
 		return fmt.Errorf("statement %d failed (%s): %w", in.Num, in.DDL, err)
 	}
 	return nil
+}
+
+// execStatement runs a single statement. When waitForJob is set, the
+// statement is expected to return an async job_id (Aurora DSQL's CREATE INDEX
+// ASYNC / ALTER TABLE ASYNC); the call then blocks on sys.wait_for_job until
+// the job finishes. If no job_id is returned (e.g. PostgreSQL behind the
+// deesql proxy, which builds the index synchronously) there is nothing to wait for.
+func execStatement(ctx context.Context, db *sql.DB, query string, waitForJob bool, num int) error {
+	if !waitForJob {
+		_, err := db.ExecContext(ctx, query)
+		return err
+	}
+
+	jobID, err := queryJobID(ctx, db, query)
+	if err != nil || jobID == "" {
+		return err
+	}
+
+	ui.Dim("    Waiting for async job %s...\n", jobID)
+	var ok bool
+	if err := db.QueryRowContext(ctx, "SELECT sys.wait_for_job($1)", jobID).Scan(&ok); err != nil {
+		return fmt.Errorf("waiting for job %s: %w", jobID, err)
+	}
+	if !ok {
+		return fmt.Errorf("statement %d: async job %s did not complete successfully (check sys.jobs)", num, jobID)
+	}
+	return nil
+}
+
+func queryJobID(ctx context.Context, db *sql.DB, query string) (string, error) {
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var jobID string
+	if rows.Next() {
+		if err := rows.Scan(&jobID); err != nil {
+			return "", fmt.Errorf("reading job_id: %w", err)
+		}
+	}
+	return jobID, rows.Err()
 }
 
 // isOCCError checks if the error is a DSQL optimistic concurrency conflict (SQLSTATE 40001).

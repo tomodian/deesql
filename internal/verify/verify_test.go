@@ -1,6 +1,8 @@
 package verify
 
 import (
+	"github.com/tomodian/deesql/internal/rules"
+
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,20 +77,87 @@ CREATE INDEX ASYNC idx_users_name ON users (name);
 		assert.True(t, hasSerial)
 	})
 
-	t.Run("FOREIGN KEY detected", func(t *testing.T) {
+	t.Run("newly supported DSQL features pass", func(t *testing.T) {
 		dir := t.TempDir()
-		writeFile(t, dir, "bad.sql", `CREATE TABLE t (id TEXT, parent_id TEXT REFERENCES parents(id));`)
+		writeFile(t, dir, "ok.sql", `
+CREATE SEQUENCE order_seq CACHE 65536;
+
+CREATE TABLE users (
+    id    BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 70000) PRIMARY KEY,
+    email TEXT NOT NULL,
+    prefs JSONB,
+    raw   JSON
+);
+
+CREATE TABLE orders (
+    id      BIGINT PRIMARY KEY DEFAULT nextval('order_seq'),
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    qty     INTEGER NOT NULL,
+    total   INTEGER GENERATED ALWAYS AS (qty * 2) STORED,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+);
+
+CREATE INDEX ASYNC idx_users_lower_email ON users ((lower(email)));
+CREATE INDEX ASYNC idx_orders_open ON orders (user_id NULLS FIRST) WHERE qty > 0;
+CREATE STATISTICS orders_stats (ndistinct) ON user_id, qty FROM orders;
+
+ALTER TABLE orders ADD CONSTRAINT orders_qty_check CHECK (qty > 0) NOT VALID;
+ALTER TABLE ASYNC orders VALIDATE CONSTRAINT orders_qty_check;
+ALTER SYSTEM SET dsql.enable_batched_nestloop = off;
+`)
 		violations, err := Files([]string{dir})
 		require.NoError(t, err)
-		assert.NotEmpty(t, violations)
+		assert.Empty(t, violations)
+	})
 
-		hasFk := false
+	t.Run("multi-line statement rules report the statement's first line", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "bad.sql", `CREATE TABLE t (a INT);
+
+ALTER TABLE t
+    ADD CONSTRAINT t_a_check
+    CHECK (a > 0);
+
+CREATE SEQUENCE s
+    INCREMENT BY 1;
+
+CREATE TABLE u (
+    id INTEGER GENERATED ALWAYS AS IDENTITY
+);
+`)
+		violations, err := Files([]string{dir})
+		require.NoError(t, err)
+
+		byRule := map[string]int{}
 		for _, v := range violations {
-			if v.Rule == "FOREIGN KEY constraint not supported" {
-				hasFk = true
-			}
+			byRule[v.Rule] = v.Line
 		}
-		assert.True(t, hasFk)
+		assert.Equal(t, 3, byRule[rules.MsgAddConstraintValid])
+		assert.Equal(t, "ALTER TABLE t", violations[0].Context)
+		assert.Equal(t, 7, byRule[rules.MsgSequenceCache])
+		assert.Equal(t, 10, byRule[rules.MsgIdentityType])
+		assert.Equal(t, 10, byRule[rules.MsgIdentityCache])
+	})
+
+	t.Run("still-unsupported ALTER TABLE forms detected", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "bad.sql", `
+ALTER TABLE t ALTER COLUMN a TYPE BIGINT;
+ALTER TABLE t ALTER COLUMN a SET NOT NULL;
+ALTER TABLE t ADD PRIMARY KEY (id);
+ALTER TABLE t ADD CONSTRAINT u UNIQUE (email);
+CREATE SEQUENCE s CACHE 1000;
+`)
+		violations, err := Files([]string{dir})
+		require.NoError(t, err)
+
+		var got []string
+		for _, v := range violations {
+			got = append(got, v.Rule)
+		}
+		assert.ElementsMatch(t, []string{
+			rules.MsgAlterColumnType, rules.MsgSetNotNull, rules.MsgAddPrimaryKey, rules.MsgAddUnique, rules.MsgCacheRange,
+		}, got)
 	})
 
 	t.Run("unsupported index types detected", func(t *testing.T) {
@@ -197,7 +266,7 @@ CREATE TABLE t (id TEXT NOT NULL);
 	})
 
 	t.Run("unsupported types detected", func(t *testing.T) {
-		types := []string{"money", "xml", "cidr", "macaddr", "hstore", "tsvector", "tsquery", "int4range", "json", "jsonb"}
+		types := []string{"money", "xml", "cidr", "macaddr", "hstore", "tsvector", "tsquery", "int4range"}
 		for _, typ := range types {
 			t.Run(typ, func(t *testing.T) {
 				dir := t.TempDir()

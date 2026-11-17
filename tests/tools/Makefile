@@ -32,7 +32,22 @@ test: build clean
 	@echo "=== plan: expect no drift ==="
 	@$(DEESQL) plan \
 		--endpoint localhost:15432 \
-		--schema schema
+		--schema schema | tee /dev/stderr | grep -q "No changes detected"
+	@echo ""
+	@echo "=== verify: v2 schema ==="
+	@$(DEESQL) verify --schema schema_v2
+	@echo ""
+	@echo "=== apply: migrate to v2 (ALTER paths) ==="
+	@$(DEESQL) apply \
+		--endpoint localhost:15432 \
+		--schema schema_v2 \
+		--allow-hazards INDEX_BUILD,INDEX_DROPPED,DELETES_DATA,CORRECTNESS,CONSTRAINT_VALIDATION \
+		--force
+	@echo ""
+	@echo "=== plan: expect no drift after v2 ==="
+	@$(DEESQL) plan \
+		--endpoint localhost:15432 \
+		--schema schema_v2 | tee /dev/stderr | grep -q "No changes detected"
 	@echo ""
 	@echo "=== sql: run cleanup ==="
 	@$(DEESQL) sql cleanup.sql \

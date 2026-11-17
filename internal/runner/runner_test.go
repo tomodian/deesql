@@ -177,4 +177,125 @@ func TestExecute(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("waits for async job when requested", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").
+			WillReturnRows(sqlmock.NewRows([]string{"job_id"}).AddRow("jh2gbtx4mzhgfkbimtgwn5j45y"))
+		mock.ExpectQuery(`SELECT sys\.wait_for_job`).WithArgs("jh2gbtx4mzhgfkbimtgwn5j45y").
+			WillReturnRows(sqlmock.NewRows([]string{"wait_for_job"}).AddRow(true))
+		mock.ExpectExec("ADD CONSTRAINT").WillReturnResult(sqlmock.NewResult(0, 0))
+
+		plan := schema.Plan{Statements: []schema.Statement{
+			{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true},
+			{DDL: "ALTER TABLE t ADD CONSTRAINT u UNIQUE USING INDEX u"},
+		}}
+
+		err = Execute(context.Background(), ExecuteInput{DB: db, Plan: plan})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("failed async job returns error", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").
+			WillReturnRows(sqlmock.NewRows([]string{"job_id"}).AddRow("job1"))
+		mock.ExpectQuery(`SELECT sys\.wait_for_job`).WithArgs("job1").
+			WillReturnRows(sqlmock.NewRows([]string{"wait_for_job"}).AddRow(false))
+
+		plan := schema.Plan{Statements: []schema.Statement{
+			{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true},
+		}}
+
+		err = Execute(context.Background(), ExecuteInput{DB: db, Plan: plan})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "async job job1 did not complete successfully")
+	})
+
+	t.Run("no job id means nothing to wait for", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").WillReturnRows(sqlmock.NewRows([]string{"job_id"}))
+
+		plan := schema.Plan{Statements: []schema.Statement{
+			{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true},
+		}}
+
+		err = Execute(context.Background(), ExecuteInput{DB: db, Plan: plan})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("job-producing statement retried on OCC conflict", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").WillReturnError(fmt.Errorf("ERROR: change conflicts (SQLSTATE 40001)"))
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").
+			WillReturnRows(sqlmock.NewRows([]string{"job_id"}).AddRow("job2"))
+		mock.ExpectQuery(`SELECT sys\.wait_for_job`).WithArgs("job2").
+			WillReturnRows(sqlmock.NewRows([]string{"wait_for_job"}).AddRow(true))
+
+		err = Execute(context.Background(), ExecuteInput{
+			DB:         db,
+			Plan:       schema.Plan{Statements: []schema.Statement{{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true}}},
+			MaxRetries: 1,
+		})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("wait_for_job query error is returned", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").
+			WillReturnRows(sqlmock.NewRows([]string{"job_id"}).AddRow("job3"))
+		mock.ExpectQuery(`SELECT sys\.wait_for_job`).WillReturnError(fmt.Errorf("function sys.wait_for_job does not exist"))
+
+		err = Execute(context.Background(), ExecuteInput{DB: db, Plan: schema.Plan{Statements: []schema.Statement{
+			{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true},
+		}}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "waiting for job job3")
+	})
+
+	t.Run("job-producing statement failure is returned", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").WillReturnError(fmt.Errorf("relation exists"))
+
+		err = Execute(context.Background(), ExecuteInput{DB: db, Plan: schema.Plan{Statements: []schema.Statement{
+			{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true},
+		}}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "relation exists")
+	})
+
+	t.Run("unreadable job_id is returned", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("CREATE UNIQUE INDEX ASYNC").
+			WillReturnRows(sqlmock.NewRows([]string{"job_id", "extra"}).AddRow("job4", "x"))
+
+		err = Execute(context.Background(), ExecuteInput{DB: db, Plan: schema.Plan{Statements: []schema.Statement{
+			{DDL: "CREATE UNIQUE INDEX ASYNC u ON t (a)", WaitForJob: true},
+		}}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reading job_id")
+	})
 }

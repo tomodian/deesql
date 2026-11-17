@@ -10,7 +10,9 @@ DROP VIEW IF EXISTS active_projects;
 DROP FUNCTION IF EXISTS is_overdue(DATE);
 DROP FUNCTION IF EXISTS full_name(TEXT, TEXT);
 
--- Tables (indexes and constraints are dropped automatically)
+-- Tables (indexes and constraints are dropped automatically).
+-- Referencing tables first (foreign keys).
+DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS comments;
 DROP TABLE IF EXISTS settings;
@@ -18,3 +20,6 @@ DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS users;
+
+-- Sequences
+DROP SEQUENCE IF EXISTS order_number_seq;
